@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+ISSUE_NUMBER="${1:-}"
+BUILD_FLAG=false
+INTERACTIVE_FLAG=false
+
+# Parse flags
+for arg in "$@"; do
+    case "$arg" in
+        --build|-Build)
+            BUILD_FLAG=true
+            ;;
+        --interactive|-Interactive)
+            INTERACTIVE_FLAG=true
+            ;;
+    esac
+done
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$REPO_ROOT"
+
+# ==========================================================
+# PRE-FLIGHT CHECKS
+# ==========================================================
+
+# 1. Verify Git Repository
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "[ERROR] Not inside a Git repository."
+    exit 1
+fi
+
+CURRENT_BRANCH="$(git branch --show-current 2>/dev/null || true)"
+if [ -z "$CURRENT_BRANCH" ]; then
+    echo "[ERROR] Could not determine active Git branch. Please checkout a valid branch first."
+    exit 1
+fi
+
+# 2. Strict Check for Antigravity CLI (Option B)
+if ! command -v agy >/dev/null 2>&1; then
+    echo "[ERROR] Antigravity CLI (agy) is not installed or not in your PATH."
+    echo "Please install agy to proceed: curl -fsSL https://antigravity.google/cli/install.sh | bash"
+    exit 1
+fi
+
+# 3. Check for Container Engine (Podman preferred, Docker fallback)
+if command -v podman >/dev/null 2>&1; then
+    ENGINE="Podman ($($(command -v podman) --version))"
+elif command -v docker >/dev/null 2>&1; then
+    ENGINE="Docker ($($(command -v docker) --version))"
+else
+    echo "[ERROR] Neither Podman nor Docker was found in your PATH."
+    echo "Please install Podman (e.g. sudo apt install podman podman-compose) or Docker to run the sandbox."
+    exit 1
+fi
+
+# 4. Verify all required child bash scripts
+SCRIPTS_DIR="$REPO_ROOT/scripts"
+REQUIRED_SCRIPTS=(
+    "fetch-issue.sh"
+    "create-worktree.sh"
+    "run-sandbox.sh"
+    "review-merge.sh"
+    "cleanup-worktree.sh"
+    "push-changes.sh"
+)
+for script in "${REQUIRED_SCRIPTS[@]}"; do
+    script_path="$SCRIPTS_DIR/$script"
+    if [ ! -f "$script_path" ]; then
+        echo "[ERROR] Missing required script: $script_path"
+        exit 1
+    fi
+    chmod +x "$script_path"
+done
+
+# Prompt for Issue Number if not provided
+if [ -z "$ISSUE_NUMBER" ] || ! [[ "$ISSUE_NUMBER" =~ ^[0-9]+$ ]]; then
+    echo "=========================================================="
+    echo "   Antigravity GitHub Issue Automation Coordinator        "
+    echo "=========================================================="
+    echo "Base Branch      : $CURRENT_BRANCH"
+    echo "Container Engine : $ENGINE"
+    echo ""
+    read -r -p "Enter GitHub Issue Number to work on: " ISSUE_NUMBER
+    if [ -z "$ISSUE_NUMBER" ] || ! [[ "$ISSUE_NUMBER" =~ ^[0-9]+$ ]] || [ "$ISSUE_NUMBER" -le 0 ]; then
+        echo "[ERROR] Invalid issue number entered."
+        exit 1
+    fi
+fi
+
+WORKTREE_NAME="worktree-issue-$ISSUE_NUMBER"
+BRANCH_NAME="issue-$ISSUE_NUMBER"
+WORKTREE_PATH="$REPO_ROOT/.worktrees/$WORKTREE_NAME"
+
+echo ""
+echo "[START] Starting issue lifecycle for Issue #$ISSUE_NUMBER..."
+echo "Base Branch      : $CURRENT_BRANCH"
+echo "Worktree Name    : $WORKTREE_NAME"
+echo "Branch Name      : $BRANCH_NAME"
+echo "Container Engine : $ENGINE"
+
+# ==========================================================
+# STEP 1: Fetch issue details & confirm with user
+# ==========================================================
+echo ""
+echo ">>> [STEP 1/5] Fetching issue details from GitHub..."
+TMP_CONTEXT_FILE="/tmp/issue_${ISSUE_NUMBER}_context.md"
+if ! bash "$SCRIPTS_DIR/fetch-issue.sh" "$ISSUE_NUMBER" "$TMP_CONTEXT_FILE"; then
+    echo "[INFO] Process aborted or issue fetch failed."
+    rm -f "$TMP_CONTEXT_FILE"
+    exit 0
+fi
+
+# ==========================================================
+# STEP 2: Create isolated Git Worktree and branch
+# ==========================================================
+echo ""
+echo ">>> [STEP 2/5] Creating isolated Git Worktree..."
+if ! bash "$SCRIPTS_DIR/create-worktree.sh" "$WORKTREE_NAME" "$BRANCH_NAME" "$CURRENT_BRANCH"; then
+    echo "[ERROR] Failed to create git worktree."
+    rm -f "$TMP_CONTEXT_FILE"
+    exit 1
+fi
+
+# Inject issue context into worktree
+ISSUE_CONTEXT_DEST="$WORKTREE_PATH/ISSUE_CONTEXT.md"
+if [ -f "$TMP_CONTEXT_FILE" ]; then
+    cp "$TMP_CONTEXT_FILE" "$ISSUE_CONTEXT_DEST"
+    rm -f "$TMP_CONTEXT_FILE"
+    echo "[OK] Injected issue context into worktree: $ISSUE_CONTEXT_DEST"
+fi
+
+# ==========================================================
+# STEP 3: Run Sandbox with automated agy
+# ==========================================================
+echo ""
+echo ">>> [STEP 3/5] Launching Sandbox & running Antigravity (agy)..."
+SANDBOX_ARGS=("-WorktreeName" "$WORKTREE_NAME" "-IssueFile" ".worktrees/$WORKTREE_NAME/ISSUE_CONTEXT.md")
+if [ "$BUILD_FLAG" = true ]; then
+    SANDBOX_ARGS+=("-Build")
+fi
+if [ "$INTERACTIVE_FLAG" = true ]; then
+    SANDBOX_ARGS+=("-Interactive")
+fi
+
+if ! bash "$SCRIPTS_DIR/run-sandbox.sh" "${SANDBOX_ARGS[@]}"; then
+    echo "[ERROR] Sandbox run failed."
+    exit 1
+fi
+
+# Explicit worktree repair on host
+if [ -d "$WORKTREE_PATH" ]; then
+    git worktree repair "$WORKTREE_PATH" >/dev/null 2>&1 || true
+fi
+
+# ==========================================================
+# STEP 4: Review changes with agy, confirm, merge & cleanup
+# ==========================================================
+echo ""
+echo ">>> [STEP 4/5] Reviewing changes and merging..."
+MERGED=false
+if bash "$SCRIPTS_DIR/review-merge.sh" "$WORKTREE_NAME" "$BRANCH_NAME" "$CURRENT_BRANCH"; then
+    MERGED=true
+fi
+
+# ==========================================================
+# STEP 5: Confirm and push to remote
+# ==========================================================
+if [ "$MERGED" = true ]; then
+    echo ""
+    echo ">>> [STEP 5/5] Push changes to remote..."
+    bash "$SCRIPTS_DIR/push-changes.sh" "$CURRENT_BRANCH" "origin"
+else
+    echo ""
+    echo "[INFO] Skipping push since changes were not merged into '$CURRENT_BRANCH'."
+fi
+
+echo ""
+echo "=========================================================="
+echo "   Issue #$ISSUE_NUMBER Workflow Completed!               "
+echo "=========================================================="
