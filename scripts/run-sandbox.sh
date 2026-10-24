@@ -3,6 +3,7 @@ set -eo pipefail
 
 WORKTREE_NAME=""
 ISSUE_FILE=""
+TARGET_REPO=""
 BUILD=false
 INTERACTIVE=false
 
@@ -15,6 +16,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -IssueFile|--issue-file)
             ISSUE_FILE="$2"
+            shift 2
+            ;;
+        -TargetRepo|--target-repo)
+            TARGET_REPO="$2"
             shift 2
             ;;
         -Build|--build)
@@ -36,24 +41,31 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Calculate repository root
+# 1. Determine Toolkit Root (where scripts/ and docker-compose.sandbox.yml live)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-cd "$REPO_ROOT"
+TOOLKIT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+export TOOLKIT_DIR
 
-# Derive container and image names
-REPO_NAME="$(basename "$REPO_ROOT" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]/-/g')"
+# 2. Determine Target Project Repository (where user's project code lives)
+if [ -z "$TARGET_REPO" ]; then
+    TARGET_REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+fi
+export TARGET_REPO
+
+# Derive container and image names from target project
+REPO_NAME="$(basename "$TARGET_REPO" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]/-/g')"
 export SANDBOX_CONTAINER="${REPO_NAME}-sandbox"
 export SANDBOX_IMAGE="${REPO_NAME}-sandbox:latest"
 
 echo "=========================================================="
 echo "   Container Sandbox Runner                               "
 echo "=========================================================="
-echo "Repository Root   : $REPO_ROOT"
+echo "Toolkit Root      : $TOOLKIT_DIR"
+echo "Target Repository : $TARGET_REPO"
 echo "Container Name    : $SANDBOX_CONTAINER"
 echo "Image Name        : $SANDBOX_IMAGE"
 
-# 1. Detect Container Engine (Podman preferred, Docker fallback)
+# 3. Detect Container Engine (Podman preferred, Docker fallback)
 CONTAINER_ENGINE=""
 COMPOSE_CMD=""
 
@@ -83,7 +95,7 @@ else
     exit 1
 fi
 
-# 2. Check and pre-create host Gemini credentials folder
+# 4. Check and pre-create host Gemini credentials folder
 GEMINI_PATH="${HOME}/.gemini"
 if [ ! -d "$GEMINI_PATH" ]; then
     echo "[INFO] Creating host credentials directory at: $GEMINI_PATH"
@@ -92,8 +104,8 @@ else
     echo "[OK] Found host Antigravity credentials: $GEMINI_PATH"
 fi
 
-# 3. Check .gitconfig.sandbox in repo root
-GIT_CONFIG_SANDBOX="$REPO_ROOT/.gitconfig.sandbox"
+# 5. Check .gitconfig.sandbox in Toolkit Root (centralized so target repo stays clean)
+GIT_CONFIG_SANDBOX="$TOOLKIT_DIR/.gitconfig.sandbox"
 if [ ! -f "$GIT_CONFIG_SANDBOX" ]; then
     HOST_GIT_USER="$(git config user.name 2>/dev/null || echo "$USER")"
     HOST_GIT_EMAIL="$(git config user.email 2>/dev/null || echo "${USER}@localhost")"
@@ -120,39 +132,41 @@ EOF
 fi
 echo "[OK] Using Git sandbox configuration: $GIT_CONFIG_SANDBOX"
 
-# 4. Optional Rebuild
-DOCKER_COMPOSE_FILE="$REPO_ROOT/docker-compose.sandbox.yml"
+# 6. Optional Rebuild
+DOCKER_COMPOSE_FILE="$TOOLKIT_DIR/docker-compose.sandbox.yml"
 if [ "$BUILD" = true ]; then
     echo ""
     echo "[INFO] Building sandbox image ($SANDBOX_IMAGE)..."
-    $COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" --project-directory "$REPO_ROOT" build sandbox
+    $COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" --project-directory "$TOOLKIT_DIR" build sandbox
 fi
 
-# Ensure executable and LF line endings on runner script
+# Ensure executable on runner script
 RUNNER_SCRIPT="$SCRIPT_DIR/container-agent-runner.sh"
 if [ -f "$RUNNER_SCRIPT" ]; then
     chmod +x "$RUNNER_SCRIPT"
 fi
 
-# 5. Clean up existing container if present
+# 7. Clean up existing container if present
 EXISTING_CONTAINER="$($CONTAINER_ENGINE ps -a -q --filter "name=^/${SANDBOX_CONTAINER}$" 2>/dev/null || true)"
 if [ -n "$EXISTING_CONTAINER" ]; then
     $CONTAINER_ENGINE rm -f "$SANDBOX_CONTAINER" >/dev/null 2>&1 || true
 fi
 
-# 6. Run container in automated or interactive mode
+# 8. Run container in automated or interactive mode
 if [ -n "$WORKTREE_NAME" ] && [ "$INTERACTIVE" = false ]; then
     WORKTREE_CONTAINER_PATH="/workspace/.worktrees/$WORKTREE_NAME"
     echo ""
     echo "[INFO] Starting automated agent scoped to: $WORKTREE_CONTAINER_PATH"
+    issue_arg="${ISSUE_FILE//\\//}"
 
-    $COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" --project-directory "$REPO_ROOT" run --rm -w "$WORKTREE_CONTAINER_PATH" sandbox bash /workspace/scripts/container-agent-runner.sh "$WORKTREE_NAME" "$ISSUE_FILE"
+    # Run container executing runner from mounted /runner/
+    $COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" --project-directory "$TOOLKIT_DIR" run --rm -w "$WORKTREE_CONTAINER_PATH" sandbox bash /runner/container-agent-runner.sh "$WORKTREE_NAME" "$issue_arg"
     EXIT_CODE=$?
 
     # Post-run: repair worktree on host
-    WORKTREE_HOST_DIR="$REPO_ROOT/.worktrees/$WORKTREE_NAME"
+    WORKTREE_HOST_DIR="$TARGET_REPO/.worktrees/$WORKTREE_NAME"
     if [ -d "$WORKTREE_HOST_DIR" ]; then
-        git worktree repair "$WORKTREE_HOST_DIR" >/dev/null 2>&1 || true
+        git -C "$TARGET_REPO" worktree repair "$WORKTREE_HOST_DIR" >/dev/null 2>&1 || true
     fi
 
     if [ $EXIT_CODE -ne 0 ]; then
@@ -171,6 +185,6 @@ else
     echo "----------------------------------------------------------"
     echo ""
     echo "[INFO] Entering sandbox container shell (exit or Ctrl+D to leave)..."
-    $COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" --project-directory "$REPO_ROOT" run --rm sandbox bash
+    $COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" --project-directory "$TOOLKIT_DIR" run --rm sandbox bash
     exit $?
 fi

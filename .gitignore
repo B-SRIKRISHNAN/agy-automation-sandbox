@@ -1,0 +1,13 @@
+﻿# Ephemeral runtime files
+.gitconfig.sandbox
+.worktrees/
+ISSUE_CONTEXT.md
+m2_home/
+m2_repo/
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/

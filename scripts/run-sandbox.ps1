@@ -28,39 +28,60 @@
 param (
     [string]$WorktreeName = "",
     [string]$IssueFile = "",
+    [string]$TargetRepo = "",
     [switch]$Build,
     [switch]$Interactive
 )
 
 $ErrorActionPreference = "Stop"
 
-# Calculate repository root (parent of scripts/)
-$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$RepoRootNormalized = $RepoRoot -replace '\\', '/'
+# 1. Determine Toolkit Root (where scripts/ and docker-compose.sandbox.yml live)
+$ToolkitRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$env:TOOLKIT_DIR = $ToolkitRoot
 
-# Dynamically derive repository, container, and image names
-$RepoName = (Split-Path $RepoRoot -Leaf).ToLower() -replace '[^a-z0-9_-]', '-'
+# 2. Determine Target Project Repository (where user's project code lives)
+if (-not $TargetRepo) {
+    try {
+        $targetGit = (git rev-parse --show-toplevel 2>$null)
+        $TargetRepo = if ($targetGit) { $targetGit.Trim() } else { (Get-Location).Path }
+    } catch {
+        $TargetRepo = (Get-Location).Path
+    }
+}
+$env:TARGET_REPO = $TargetRepo
+
+# Dynamically derive repository, container, and image names from target project
+$RepoName = (Split-Path $TargetRepo -Leaf).ToLower() -replace '[^a-z0-9_-]', '-'
 $env:SANDBOX_CONTAINER = "$RepoName-sandbox"
 $env:SANDBOX_IMAGE = "$RepoName-sandbox:latest"
 
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host "   Docker Sandbox Runner                                  " -ForegroundColor Green
+Write-Host "   Container Sandbox Runner                               " -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host "Repository Root   : $RepoRoot" -ForegroundColor Gray
+Write-Host "Toolkit Root      : $ToolkitRoot" -ForegroundColor Gray
+Write-Host "Target Repository : $TargetRepo" -ForegroundColor Gray
 Write-Host "Container Name    : $env:SANDBOX_CONTAINER" -ForegroundColor Gray
 Write-Host "Image Name        : $env:SANDBOX_IMAGE" -ForegroundColor Gray
 
-# Toolchain reminder for multi-stack repos
-Write-Host "`n[TIP] Sandbox includes Node.js 22, Python 3, Java 21, and Git." -ForegroundColor DarkGray
-Write-Host "      If your repo requires other compilers (Go, Rust, etc.), update the Dockerfile." -ForegroundColor DarkGray
-
-# 1. Verify Docker CLI
-if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-    Write-Host "[ERROR] Docker is not installed or not in your PATH." -ForegroundColor Red
+# 3. Detect Container Engine (Podman preferred, Docker fallback)
+$ContainerEngine = ""
+$IsPodmanCompose = $false
+if (Get-Command podman -ErrorAction SilentlyContinue) {
+    $ContainerEngine = "podman"
+    if (Get-Command podman-compose -ErrorAction SilentlyContinue) {
+        $IsPodmanCompose = $true
+    }
+    Write-Host "[INFO] Detected container engine: Podman" -ForegroundColor Green
+} elseif (Get-Command docker -ErrorAction SilentlyContinue) {
+    $ContainerEngine = "docker"
+    Write-Host "[INFO] Detected container engine: Docker" -ForegroundColor Green
+} else {
+    Write-Host "[ERROR] Neither Podman nor Docker is installed or in your PATH." -ForegroundColor Red
+    Write-Host "Please install Podman or Docker to run the sandbox." -ForegroundColor Yellow
     exit 1
 }
 
-# 2. Check and pre-create host Gemini credentials folder to prevent root-owned folder creation
+# 4. Check and pre-create host Gemini credentials folder
 $GeminiPath = Join-Path $env:USERPROFILE ".gemini"
 if (-not (Test-Path $GeminiPath)) {
     Write-Host "[INFO] Creating host credentials directory at: $GeminiPath" -ForegroundColor Cyan
@@ -69,8 +90,8 @@ if (-not (Test-Path $GeminiPath)) {
     Write-Host "[OK] Found host Antigravity credentials: $GeminiPath" -ForegroundColor Green
 }
 
-# 3. Check .gitconfig.sandbox in repo root (dynamically inherits host Git identity)
-$GitConfigSandbox = Join-Path $RepoRoot ".gitconfig.sandbox"
+# 5. Check .gitconfig.sandbox in Toolkit Root (centralized so target repo stays clean)
+$GitConfigSandbox = Join-Path $ToolkitRoot ".gitconfig.sandbox"
 if (-not (Test-Path $GitConfigSandbox)) {
     $hostGitUser = (git config user.name 2>$null)
     if ($hostGitUser) { $hostGitUser = $hostGitUser.Trim() } else { $hostGitUser = $env:USERNAME }
@@ -93,20 +114,33 @@ if (-not (Test-Path $GitConfigSandbox)) {
     preloadindex = true
     fscache = true
     untrackedCache = true
+
+[worktree]
+    useRelativePaths = true
 "@ | Out-File -FilePath $GitConfigSandbox -Encoding utf8
 }
 Write-Host "[OK] Using Git sandbox configuration: $GitConfigSandbox" -ForegroundColor Green
 
-# 4. Optional Rebuild
-# Allow Docker's normal informational stderr output without triggering NativeCommandError
+# 6. Optional Rebuild
 $ErrorActionPreference = "Continue"
+$DockerComposeFile = Join-Path $ToolkitRoot "docker-compose.sandbox.yml"
 
-$DockerComposeFile = Join-Path $RepoRoot "docker-compose.sandbox.yml"
+function Invoke-SandboxCompose {
+    param([string[]]$ComposeArgs)
+    if ($IsPodmanCompose) {
+        & podman-compose -f $DockerComposeFile $ComposeArgs
+    } elseif ($ContainerEngine -eq "podman") {
+        & podman compose -f $DockerComposeFile --project-directory $ToolkitRoot $ComposeArgs
+    } else {
+        & docker compose -f $DockerComposeFile --project-directory $ToolkitRoot $ComposeArgs
+    }
+}
+
 if ($Build) {
-    Write-Host "`n[INFO] Building Docker sandbox image ($env:SANDBOX_IMAGE)..." -ForegroundColor Cyan
-    docker compose -f $DockerComposeFile --project-directory $RepoRoot build sandbox
+    Write-Host "`n[INFO] Building sandbox image ($env:SANDBOX_IMAGE)..." -ForegroundColor Cyan
+    Invoke-SandboxCompose @("build", "sandbox")
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "[ERROR] Docker build failed with exit code $LASTEXITCODE." -ForegroundColor Red
+        Write-Host "[ERROR] Container build failed with exit code $LASTEXITCODE." -ForegroundColor Red
         exit $LASTEXITCODE
     }
 }
@@ -119,14 +153,13 @@ if (Test-Path $RunnerScript) {
     [System.IO.File]::WriteAllText($RunnerScript, $scriptContent, (New-Object System.Text.UTF8Encoding($false)))
 }
 
-# 5. Clean up any existing container with same dynamic name if present
-$existingContainer = (docker ps -a -q --filter "name=^/${env:SANDBOX_CONTAINER}$")
+# 7. Clean up any existing container with same dynamic name if present
+$existingContainer = (& $ContainerEngine ps -a -q --filter "name=^/${env:SANDBOX_CONTAINER}$")
 if ($existingContainer) {
-    docker rm -f $env:SANDBOX_CONTAINER | Out-Null
+    & $ContainerEngine rm -f $env:SANDBOX_CONTAINER | Out-Null
 }
 
-# 6. Run container in automated or interactive mode
-# Allow Docker's normal informational stderr output without triggering NativeCommandError
+# 8. Run container in automated or interactive mode
 $ErrorActionPreference = "Continue"
 
 if ($WorktreeName -and -not $Interactive) {
@@ -134,17 +167,16 @@ if ($WorktreeName -and -not $Interactive) {
     Write-Host "`n[INFO] Starting automated agent scoped to: $worktreeContainerPath" -ForegroundColor Cyan
     $issueArg = if ($IssueFile) { $IssueFile.Replace("\", "/") } else { "" }
     
-    # Scope working directory explicitly to the worktree via -w
-    docker compose -f $DockerComposeFile --project-directory $RepoRoot run --rm -w $worktreeContainerPath sandbox bash /workspace/scripts/container-agent-runner.sh "$WorktreeName" "$issueArg"
+    # Run container executing runner from mounted /runner/
+    Invoke-SandboxCompose @("run", "--rm", "-w", $worktreeContainerPath, "sandbox", "bash", "/runner/container-agent-runner.sh", "$WorktreeName", "$issueArg")
     $exitCode = $LASTEXITCODE
 
-    # Post-run: repair worktree on host explicitly
-    Set-Location $RepoRoot
-    $worktreeHostDir = Join-Path (Join-Path $RepoRoot ".worktrees") $WorktreeName
+    # Post-run: repair worktree on host
+    $worktreeHostDir = Join-Path (Join-Path $TargetRepo ".worktrees") $WorktreeName
     if (Test-Path $worktreeHostDir) {
         & {
             $ErrorActionPreference = "SilentlyContinue"
-            git worktree repair $worktreeHostDir 2>&1 | Out-Null
+            git -C $TargetRepo worktree repair $worktreeHostDir 2>&1 | Out-Null
         }
     }
 
@@ -154,7 +186,7 @@ if ($WorktreeName -and -not $Interactive) {
     }
     Write-Host "[OK] Sandbox container run finished successfully." -ForegroundColor Green
 }
- else {
+else {
     Write-Host "`n----------------------------------------------------------" -ForegroundColor DarkGray
     Write-Host "Tips inside the container:" -ForegroundColor Yellow
     Write-Host "  1. Test agy CLI:         agy --version" -ForegroundColor Gray
@@ -164,6 +196,6 @@ if ($WorktreeName -and -not $Interactive) {
     Write-Host "----------------------------------------------------------`n" -ForegroundColor DarkGray
 
     Write-Host "[INFO] Entering sandbox container shell (exit or Ctrl+D to leave)..." -ForegroundColor Cyan
-    docker compose -f $DockerComposeFile --project-directory $RepoRoot run --rm sandbox bash
+    Invoke-SandboxCompose @("run", "--rm", "sandbox", "bash")
     exit $LASTEXITCODE
 }

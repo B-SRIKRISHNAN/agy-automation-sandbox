@@ -29,8 +29,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sudo \
     && rm -rf /var/lib/apt/lists/*
 
-# Set JAVA_HOME dynamically
-ENV JAVA_HOME="/usr/lib/jvm/java-21-openjdk-amd64"
+# Multi-arch JAVA_HOME setup (compatible with x86_64, arm64, etc.)
+RUN ln -s $(ls -d /usr/lib/jvm/java-21-openjdk-* | head -n 1) /usr/lib/jvm/default-java
+ENV JAVA_HOME="/usr/lib/jvm/default-java"
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
 # Install Node.js 22 LTS (matching host system) and latest npm

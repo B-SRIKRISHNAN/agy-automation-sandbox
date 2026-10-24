@@ -17,18 +17,36 @@ for arg in "$@"; do
     esac
 done
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$REPO_ROOT"
+# 1. Determine Toolkit Root (where scripts/ and docker-compose.sandbox.yml live)
+SCRIPT_PARENT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -d "$SCRIPT_PARENT/scripts" ]; then
+    TOOLKIT_DIR="$SCRIPT_PARENT"
+elif [ -d "$SCRIPT_PARENT/../scripts" ]; then
+    TOOLKIT_DIR="$(cd "$SCRIPT_PARENT/.." && pwd)"
+else
+    TOOLKIT_DIR="$SCRIPT_PARENT"
+fi
+SCRIPTS_DIR="$TOOLKIT_DIR/scripts"
+
+# 2. Determine Target Project Repository (where user's project code lives)
+TARGET_REPO="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$TARGET_REPO" ]; then
+    echo "[ERROR] Current working directory is not inside a Git repository."
+    exit 1
+fi
+cd "$TARGET_REPO"
+
+# Ensure target repo locally ignores .worktrees/ without polluting tracked .gitignore
+GIT_EXCLUDE="$TARGET_REPO/.git/info/exclude"
+if [ -f "$GIT_EXCLUDE" ]; then
+    if ! grep -q "^\.worktrees" "$GIT_EXCLUDE"; then
+        echo -e "\n.worktrees/\nISSUE_CONTEXT.md" >> "$GIT_EXCLUDE"
+    fi
+fi
 
 # ==========================================================
 # PRE-FLIGHT CHECKS
 # ==========================================================
-
-# 1. Verify Git Repository
-if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "[ERROR] Not inside a Git repository."
-    exit 1
-fi
 
 CURRENT_BRANCH="$(git branch --show-current 2>/dev/null || true)"
 if [ -z "$CURRENT_BRANCH" ]; then
@@ -36,14 +54,14 @@ if [ -z "$CURRENT_BRANCH" ]; then
     exit 1
 fi
 
-# 2. Strict Check for Antigravity CLI (Option B)
+# Strict Check for Antigravity CLI (Option B)
 if ! command -v agy >/dev/null 2>&1; then
     echo "[ERROR] Antigravity CLI (agy) is not installed or not in your PATH."
     echo "Please install agy to proceed: curl -fsSL https://antigravity.google/cli/install.sh | bash"
     exit 1
 fi
 
-# 3. Check for Container Engine (Podman preferred, Docker fallback)
+# Check for Container Engine (Podman preferred, Docker fallback)
 if command -v podman >/dev/null 2>&1; then
     ENGINE="Podman ($($(command -v podman) --version))"
 elif command -v docker >/dev/null 2>&1; then
@@ -54,8 +72,7 @@ else
     exit 1
 fi
 
-# 4. Verify all required child bash scripts
-SCRIPTS_DIR="$REPO_ROOT/scripts"
+# Verify all required child bash scripts
 REQUIRED_SCRIPTS=(
     "fetch-issue.sh"
     "create-worktree.sh"
@@ -67,7 +84,7 @@ REQUIRED_SCRIPTS=(
 for script in "${REQUIRED_SCRIPTS[@]}"; do
     script_path="$SCRIPTS_DIR/$script"
     if [ ! -f "$script_path" ]; then
-        echo "[ERROR] Missing required script: $script_path"
+        echo "[ERROR] Missing required script in toolkit: $script_path"
         exit 1
     fi
     chmod +x "$script_path"
@@ -90,10 +107,11 @@ fi
 
 WORKTREE_NAME="worktree-issue-$ISSUE_NUMBER"
 BRANCH_NAME="issue-$ISSUE_NUMBER"
-WORKTREE_PATH="$REPO_ROOT/.worktrees/$WORKTREE_NAME"
+WORKTREE_PATH="$TARGET_REPO/.worktrees/$WORKTREE_NAME"
 
 echo ""
 echo "[START] Starting issue lifecycle for Issue #$ISSUE_NUMBER..."
+echo "Target Project   : $TARGET_REPO"
 echo "Base Branch      : $CURRENT_BRANCH"
 echo "Worktree Name    : $WORKTREE_NAME"
 echo "Branch Name      : $BRANCH_NAME"
@@ -135,7 +153,7 @@ fi
 # ==========================================================
 echo ""
 echo ">>> [STEP 3/5] Launching Sandbox & running Antigravity (agy)..."
-SANDBOX_ARGS=("-WorktreeName" "$WORKTREE_NAME" "-IssueFile" ".worktrees/$WORKTREE_NAME/ISSUE_CONTEXT.md")
+SANDBOX_ARGS=("-WorktreeName" "$WORKTREE_NAME" "-IssueFile" ".worktrees/$WORKTREE_NAME/ISSUE_CONTEXT.md" "-TargetRepo" "$TARGET_REPO")
 if [ "$BUILD_FLAG" = true ]; then
     SANDBOX_ARGS+=("-Build")
 fi
@@ -150,7 +168,7 @@ fi
 
 # Explicit worktree repair on host
 if [ -d "$WORKTREE_PATH" ]; then
-    git worktree repair "$WORKTREE_PATH" >/dev/null 2>&1 || true
+    git -C "$TARGET_REPO" worktree repair "$WORKTREE_PATH" >/dev/null 2>&1 || true
 fi
 
 # ==========================================================

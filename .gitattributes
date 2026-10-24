@@ -1,0 +1,10 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Ensure shell scripts always use LF line endings on all OS checkouts
+*.sh text eol=lf
+bin/start-issue text eol=lf
+
+# Windows specific command wrappers
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

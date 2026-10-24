@@ -1,7 +1,7 @@
 services:
   sandbox:
     build:
-      context: .
+      context: ${TOOLKIT_DIR:-.}
       dockerfile: Dockerfile.sandbox
     image: ${SANDBOX_IMAGE:-project-sandbox:latest}
     container_name: ${SANDBOX_CONTAINER:-project-sandbox}
@@ -25,15 +25,17 @@ services:
       - /root/.npm:size=256m
       - /root/.cache:size=512m
     volumes:
-      # Bind mount the project code into /workspace
-      - .:/workspace
+      # Bind mount the target project code into /workspace
+      - ${TARGET_REPO:-.}:/workspace
+      # Mount runner script from toolkit into /runner
+      - ${TOOLKIT_DIR:-.}/scripts/container-agent-runner.sh:/runner/container-agent-runner.sh:ro
       # Mount host Antigravity credentials into container (Windows & Linux compatible)
       - ${USERPROFILE:-$HOME}/.gemini:/root/.gemini
-      # Mount sandbox git configuration (name, email, safe directory)
-      - ./.gitconfig.sandbox:/root/.gitconfig
+      # Mount sandbox git configuration from toolkit
+      - ${TOOLKIT_DIR:-.}/.gitconfig.sandbox:/root/.gitconfig
       # Isolate sandbox MCP configuration so host MCP servers do not spawn inside container
-      - ./scripts/sandbox-mcp-config.json:/root/.gemini/config/mcp_config.json
-      - ./scripts/sandbox-mcp-config.json:/root/.gemini/antigravity-ide/mcp_config.json
+      - ${TOOLKIT_DIR:-.}/scripts/sandbox-mcp-config.json:/root/.gemini/config/mcp_config.json
+      - ${TOOLKIT_DIR:-.}/scripts/sandbox-mcp-config.json:/root/.gemini/antigravity-ide/mcp_config.json
     # Optional host port forwarding (adjust or add ports as needed for your specific stack)
     ports:
       - "5000:5000"   # Backend API

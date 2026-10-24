@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TOOLKIT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+exec bash "$TOOLKIT_ROOT/start-issue.sh" "$@"

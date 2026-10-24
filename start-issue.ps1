@@ -34,8 +34,39 @@ param (
 
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = $PSScriptRoot
-Set-Location $RepoRoot
+# Determine Toolkit Root (where scripts/ and docker-compose.sandbox.yml live)
+if (Test-Path (Join-Path $PSScriptRoot "scripts")) {
+    $ToolkitRoot = $PSScriptRoot
+} elseif (Test-Path (Join-Path (Split-Path $PSScriptRoot -Parent) "scripts")) {
+    $ToolkitRoot = Split-Path $PSScriptRoot -Parent
+} else {
+    $ToolkitRoot = $PSScriptRoot
+}
+$ScriptsDir = Join-Path $ToolkitRoot "scripts"
+
+# Determine Target Project Repository (where user's project code lives)
+try {
+    $targetGit = (git rev-parse --show-toplevel 2>$null)
+    $TargetRepo = if ($targetGit) { $targetGit.Trim() } else { "" }
+} catch {
+    $TargetRepo = ""
+}
+
+if (-not $TargetRepo) {
+    Write-Host "[ERROR] Current working directory is not inside a Git repository." -ForegroundColor Red
+    exit 1
+}
+
+Set-Location $TargetRepo
+
+# Pre-flight check: Ensure target repo locally ignores .worktrees/ without polluting tracked .gitignore
+$gitExclude = Join-Path (Join-Path $TargetRepo ".git") "info\exclude"
+if (Test-Path $gitExclude) {
+    $excludeContent = [System.IO.File]::ReadAllText($gitExclude)
+    if ($excludeContent -notmatch "(?m)^\.worktrees/?$") {
+        [System.IO.File]::AppendAllText($gitExclude, "`n.worktrees/`nISSUE_CONTEXT.md`n")
+    }
+}
 
 # Pre-flight check: Verify agy CLI exists on host (strictly required)
 if (-not (Get-Command agy -ErrorAction SilentlyContinue)) {
@@ -54,7 +85,6 @@ if (-not $hasPodman -and -not $hasDocker) {
 }
 
 # Pre-flight check: Verify all required child scripts exist
-$ScriptsDir = Join-Path $RepoRoot "scripts"
 $RequiredScripts = @(
     "fetch-issue.ps1",
     "create-worktree.ps1",
@@ -66,7 +96,7 @@ $RequiredScripts = @(
 foreach ($scriptName in $RequiredScripts) {
     $scriptPath = Join-Path $ScriptsDir $scriptName
     if (-not (Test-Path $scriptPath)) {
-        Write-Host "[ERROR] Missing required script: $scriptPath" -ForegroundColor Red
+        Write-Host "[ERROR] Missing required script in toolkit: $scriptPath" -ForegroundColor Red
         exit 1
     }
 }
@@ -101,10 +131,11 @@ if ($IssueNumber -le 0) {
 
 $WorktreeName = "worktree-issue-$IssueNumber"
 $BranchName = "issue-$IssueNumber"
-$WorktreesContainer = Join-Path $RepoRoot ".worktrees"
+$WorktreesContainer = Join-Path $TargetRepo ".worktrees"
 $WorktreePath = Join-Path $WorktreesContainer $WorktreeName
 
 Write-Host "`n[START] Starting issue lifecycle for Issue #$IssueNumber..." -ForegroundColor Cyan
+Write-Host "Target Project: $TargetRepo" -ForegroundColor Gray
 Write-Host "Base Branch   : $CurrentBranch" -ForegroundColor Gray
 Write-Host "Worktree Name : $WorktreeName" -ForegroundColor Gray
 Write-Host "Branch Name   : $BranchName" -ForegroundColor Gray
@@ -147,6 +178,7 @@ $issueRelFile = ".worktrees/$WorktreeName/ISSUE_CONTEXT.md"
 $sandboxParams = @{
     WorktreeName = $WorktreeName
     IssueFile    = $issueRelFile
+    TargetRepo   = $TargetRepo
 }
 if ($BuildSandbox) { $sandboxParams["Build"] = [switch]$true }
 if ($InteractiveSandbox) { $sandboxParams["Interactive"] = [switch]$true }
@@ -158,7 +190,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Explicit worktree repair on Windows host (suppress informational stderr to prevent NativeCommandError)
-Set-Location $RepoRoot
+Set-Location $TargetRepo
 if (Test-Path $WorktreePath) {
     & {
         $ErrorActionPreference = "SilentlyContinue"
