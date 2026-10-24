@@ -1,0 +1,41 @@
+services:
+  sandbox:
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    image: ${SANDBOX_IMAGE:-project-sandbox:latest}
+    container_name: ${SANDBOX_CONTAINER:-project-sandbox}
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    # Strict RAM and CPU resource limits to protect host Windows memory
+    mem_limit: 3500m
+    memswap_limit: 4096m
+    cpus: 4.0
+    pids_limit: 200
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 3500M
+          pids: 200
+    # In-memory temporary filesystems to prevent VHDX disk growth on Drive C:
+    tmpfs:
+      - /tmp:size=512m
+      - /root/.npm:size=256m
+      - /root/.cache:size=512m
+    volumes:
+      # Bind mount the project code into /workspace
+      - .:/workspace
+      # Mount host Antigravity credentials into container (Windows & Linux compatible)
+      - ${USERPROFILE:-$HOME}/.gemini:/root/.gemini
+      # Mount sandbox git configuration (name, email, safe directory)
+      - ./.gitconfig.sandbox:/root/.gitconfig
+      # Isolate sandbox MCP configuration so host MCP servers do not spawn inside container
+      - ./scripts/sandbox-mcp-config.json:/root/.gemini/config/mcp_config.json
+      - ./scripts/sandbox-mcp-config.json:/root/.gemini/antigravity-ide/mcp_config.json
+    # Optional host port forwarding (adjust or add ports as needed for your specific stack)
+    ports:
+      - "5000:5000"   # Backend API
+      - "8081:8081"   # Frontend / Mobile Bundler
+    command: /bin/bash

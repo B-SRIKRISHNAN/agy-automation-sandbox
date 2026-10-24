@@ -1,0 +1,54 @@
+# Multi-platform development sandbox for autonomous agent workflows
+FROM ubuntu:24.04
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+
+# Install base utilities, Python 3, Java 21, Maven, Git, and build tools
+# [NOTE] To support other languages (e.g., Go, Rust, Ruby), add their apt packages or toolchains here.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    software-properties-common \
+    curl \
+    gnupg \
+    && add-apt-repository -y ppa:git-core/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    build-essential \
+    python3 \
+    python3-pip \
+    python3-venv \
+    openjdk-21-jdk \
+    maven \
+    unzip \
+    tar \
+    bash-completion \
+    procps \
+    sudo \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set JAVA_HOME dynamically
+ENV JAVA_HOME="/usr/lib/jvm/java-21-openjdk-amd64"
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+# Install Node.js 22 LTS (matching host system) and latest npm
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g npm@latest \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Antigravity CLI (agy) to /usr/local/bin
+RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- -d /usr/local/bin \
+    && chmod +x /usr/local/bin/agy \
+    && agy --version
+
+# Ensure /root/.local/bin and /usr/local/bin are in PATH
+ENV PATH="/usr/local/bin:/root/.local/bin:${PATH}"
+
+# Set default workspace directory
+WORKDIR /workspace
+
+# Default command launches interactive bash shell
+CMD ["/bin/bash"]
