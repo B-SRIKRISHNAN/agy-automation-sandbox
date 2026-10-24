@@ -1,21 +1,47 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-ISSUE_NUMBER="${1:-}"
+ISSUE_NUMBER=""
 BUILD_FLAG=false
 INTERACTIVE_FLAG=false
+DRY_RUN_FLAG=false
+CONTAINER_ENGINE="auto"
 
-# Parse flags
-for arg in "$@"; do
-    case "$arg" in
-        --build|-Build)
+# Parse arguments & flags
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --build|-Build|-b)
             BUILD_FLAG=true
+            shift
             ;;
-        --interactive|-Interactive)
+        --interactive|-Interactive|-i)
             INTERACTIVE_FLAG=true
+            shift
+            ;;
+        --dry-run|-DryRun|-n)
+            DRY_RUN_FLAG=true
+            shift
+            ;;
+        --engine|-ContainerEngine|-e)
+            CONTAINER_ENGINE="$2"
+            shift 2
+            ;;
+        --engine=*|-ContainerEngine=*)
+            CONTAINER_ENGINE="${1#*=}"
+            shift
+            ;;
+        *)
+            if [ -z "$ISSUE_NUMBER" ] && [[ "$1" =~ ^[0-9]+$ ]]; then
+                ISSUE_NUMBER="$1"
+            fi
+            shift
             ;;
     esac
 done
+
+if [ "$CONTAINER_ENGINE" != "auto" ]; then
+    export CONTAINER_ENGINE
+fi
 
 # 1. Determine Toolkit Root (where scripts/ and docker-compose.sandbox.yml live)
 SCRIPT_PARENT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -61,8 +87,20 @@ if ! command -v agy >/dev/null 2>&1; then
     exit 1
 fi
 
-# Check for Container Engine (Podman preferred, Docker fallback)
-if command -v podman >/dev/null 2>&1; then
+# Check for Container Engine (Podman preferred, Docker fallback, or explicit override)
+if [ "$CONTAINER_ENGINE" = "docker" ]; then
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "[ERROR] Docker engine requested, but 'docker' was not found in PATH."
+        exit 1
+    fi
+    ENGINE="Docker ($($(command -v docker) --version))"
+elif [ "$CONTAINER_ENGINE" = "podman" ]; then
+    if ! command -v podman >/dev/null 2>&1; then
+        echo "[ERROR] Podman engine requested, but 'podman' was not found in PATH."
+        exit 1
+    fi
+    ENGINE="Podman ($($(command -v podman) --version))"
+elif command -v podman >/dev/null 2>&1; then
     ENGINE="Podman ($($(command -v podman) --version))"
 elif command -v docker >/dev/null 2>&1; then
     ENGINE="Docker ($($(command -v docker) --version))"
@@ -125,6 +163,22 @@ echo ">>> [STEP 1/5] Fetching issue details from GitHub..."
 TMP_CONTEXT_FILE="/tmp/issue_${ISSUE_NUMBER}_context.md"
 if ! bash "$SCRIPTS_DIR/fetch-issue.sh" "$ISSUE_NUMBER" "$TMP_CONTEXT_FILE"; then
     echo "[INFO] Process aborted or issue fetch failed."
+    rm -f "$TMP_CONTEXT_FILE"
+    exit 0
+fi
+
+# Dry Run intercept
+if [ "$DRY_RUN_FLAG" = true ]; then
+    echo ""
+    echo "[DRY RUN] Issue #$ISSUE_NUMBER fetched successfully. Planned execution:"
+    echo "  - Target Repo     : $TARGET_REPO"
+    echo "  - Base Branch     : $CURRENT_BRANCH"
+    echo "  - Worktree Branch : $BRANCH_NAME"
+    echo "  - Worktree Path   : $WORKTREE_PATH"
+    echo "  - Container Engine: ${CONTAINER_ENGINE:-auto-detect ($ENGINE)}"
+    echo "  - Sandbox Mode    : $(if [ "$INTERACTIVE_FLAG" = true ]; then echo 'Interactive bash shell'; else echo 'Automated Antigravity agent runner'; fi)"
+    echo "  - Build Sandbox   : $BUILD_FLAG"
+    echo "[DRY RUN] Simulation complete. No worktree created, no container started, no commits made."
     rm -f "$TMP_CONTEXT_FILE"
     exit 0
 fi

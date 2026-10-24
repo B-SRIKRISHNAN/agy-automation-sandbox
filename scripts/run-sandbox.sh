@@ -65,11 +65,32 @@ echo "Target Repository : $TARGET_REPO"
 echo "Container Name    : $SANDBOX_CONTAINER"
 echo "Image Name        : $SANDBOX_IMAGE"
 
-# 3. Detect Container Engine (Podman preferred, Docker fallback)
+# 3. Detect Container Engine (Podman preferred, Docker fallback, or explicit override)
+FORCED_ENGINE="${CONTAINER_ENGINE:-auto}"
 CONTAINER_ENGINE=""
 COMPOSE_CMD=""
 
-if command -v podman >/dev/null 2>&1; then
+if [ "$FORCED_ENGINE" = "docker" ] && command -v docker >/dev/null 2>&1; then
+    CONTAINER_ENGINE="docker"
+    if docker compose version >/dev/null 2>&1; then
+        COMPOSE_CMD="docker compose"
+    elif command -v docker-compose >/dev/null 2>&1; then
+        COMPOSE_CMD="docker-compose"
+    else
+        COMPOSE_CMD="docker compose"
+    fi
+    echo "[INFO] Using requested container engine: Docker ($($CONTAINER_ENGINE --version))"
+elif [ "$FORCED_ENGINE" = "podman" ] && command -v podman >/dev/null 2>&1; then
+    CONTAINER_ENGINE="podman"
+    if podman compose version >/dev/null 2>&1; then
+        COMPOSE_CMD="podman compose"
+    elif command -v podman-compose >/dev/null 2>&1; then
+        COMPOSE_CMD="podman-compose"
+    else
+        COMPOSE_CMD="podman compose"
+    fi
+    echo "[INFO] Using requested container engine: Podman ($($CONTAINER_ENGINE --version))"
+elif command -v podman >/dev/null 2>&1; then
     CONTAINER_ENGINE="podman"
     if podman compose version >/dev/null 2>&1; then
         COMPOSE_CMD="podman compose"

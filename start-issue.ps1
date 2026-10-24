@@ -20,16 +20,26 @@
 .PARAMETER InteractiveSandbox
     Launch sandbox in interactive mode instead of fully automated mode.
 
+.PARAMETER ContainerEngine
+    Specify container engine to use: 'podman', 'docker', or 'auto' (default: auto).
+
+.PARAMETER DryRun
+    Simulate pre-flight checks and issue resolution planning without modifying repository, worktrees, or launching containers.
+
 .EXAMPLE
     .\start-issue.ps1 -IssueNumber 15
     .\start-issue.ps1 15 -BuildSandbox
+    .\start-issue.ps1 15 -ContainerEngine docker -DryRun
 #>
 
 param (
     [Parameter(Position = 0)]
     [int]$IssueNumber = 0,
+    [ValidateSet("auto", "podman", "docker")]
+    [string]$ContainerEngine = "auto",
     [switch]$BuildSandbox,
-    [switch]$InteractiveSandbox
+    [switch]$InteractiveSandbox,
+    [switch]$DryRun
 )
 
 $ErrorActionPreference = "Stop"
@@ -75,13 +85,30 @@ if (-not (Get-Command agy -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
+# Set container engine environment override if specified
+if ($ContainerEngine -ne "auto") {
+    $env:CONTAINER_ENGINE = $ContainerEngine
+}
+
 # Pre-flight check: Verify container engine (podman or docker)
-$hasPodman = [bool](Get-Command podman -ErrorAction SilentlyContinue)
-$hasDocker = [bool](Get-Command docker -ErrorAction SilentlyContinue)
-if (-not $hasPodman -and -not $hasDocker) {
-    Write-Host "[ERROR] Neither Podman nor Docker was found in your PATH." -ForegroundColor Red
-    Write-Host "Please install Podman or Docker Desktop to run the sandbox." -ForegroundColor Yellow
-    exit 1
+if ($ContainerEngine -eq "docker") {
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+        Write-Host "[ERROR] Docker engine requested, but 'docker' was not found in PATH." -ForegroundColor Red
+        exit 1
+    }
+} elseif ($ContainerEngine -eq "podman") {
+    if (-not (Get-Command podman -ErrorAction SilentlyContinue)) {
+        Write-Host "[ERROR] Podman engine requested, but 'podman' was not found in PATH." -ForegroundColor Red
+        exit 1
+    }
+} else {
+    $hasPodman = [bool](Get-Command podman -ErrorAction SilentlyContinue)
+    $hasDocker = [bool](Get-Command docker -ErrorAction SilentlyContinue)
+    if (-not $hasPodman -and -not $hasDocker) {
+        Write-Host "[ERROR] Neither Podman nor Docker was found in your PATH." -ForegroundColor Red
+        Write-Host "Please install Podman or Docker Desktop to run the sandbox." -ForegroundColor Yellow
+        exit 1
+    }
 }
 
 # Pre-flight check: Verify all required child scripts exist
@@ -148,6 +175,20 @@ $fetchScript = Join-Path $ScriptsDir "fetch-issue.ps1"
 $issueData = & $fetchScript -IssueNumber $IssueNumber
 if ($LASTEXITCODE -ne 0 -or -not $issueData) {
     Write-Host "[INFO] Process aborted or issue fetch failed." -ForegroundColor Yellow
+    exit 0
+}
+
+# Dry Run intercept
+if ($DryRun) {
+    Write-Host "`n[DRY RUN] Issue #$IssueNumber fetched successfully. Planned execution:" -ForegroundColor Magenta
+    Write-Host "  - Target Repo     : $TargetRepo"
+    Write-Host "  - Base Branch     : $CurrentBranch"
+    Write-Host "  - Worktree Branch : $BranchName"
+    Write-Host "  - Worktree Path   : $WorktreePath"
+    Write-Host "  - Container Engine: $(if ($env:CONTAINER_ENGINE) { $env:CONTAINER_ENGINE } else { 'auto-detect (podman/docker)' })"
+    Write-Host "  - Sandbox Mode    : $(if ($InteractiveSandbox) { 'Interactive bash shell' } else { 'Automated Antigravity agent runner' })"
+    Write-Host "  - Build Sandbox   : $BuildSandbox"
+    Write-Host "[DRY RUN] Simulation complete. No worktree created, no container started, no commits made." -ForegroundColor Magenta
     exit 0
 }
 

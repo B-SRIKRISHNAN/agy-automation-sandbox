@@ -63,10 +63,21 @@ Write-Host "Target Repository : $TargetRepo" -ForegroundColor Gray
 Write-Host "Container Name    : $env:SANDBOX_CONTAINER" -ForegroundColor Gray
 Write-Host "Image Name        : $env:SANDBOX_IMAGE" -ForegroundColor Gray
 
-# 3. Detect Container Engine (Podman preferred, Docker fallback)
+# 3. Detect Container Engine (honoring CONTAINER_ENGINE environment variable if set)
 $ContainerEngine = ""
 $IsPodmanCompose = $false
-if (Get-Command podman -ErrorAction SilentlyContinue) {
+$forcedEngine = $env:CONTAINER_ENGINE
+
+if ($forcedEngine -eq "docker" -and (Get-Command docker -ErrorAction SilentlyContinue)) {
+    $ContainerEngine = "docker"
+    Write-Host "[INFO] Using requested container engine: Docker" -ForegroundColor Green
+} elseif ($forcedEngine -eq "podman" -and (Get-Command podman -ErrorAction SilentlyContinue)) {
+    $ContainerEngine = "podman"
+    if (Get-Command podman-compose -ErrorAction SilentlyContinue) {
+        $IsPodmanCompose = $true
+    }
+    Write-Host "[INFO] Using requested container engine: Podman" -ForegroundColor Green
+} elseif (Get-Command podman -ErrorAction SilentlyContinue) {
     $ContainerEngine = "podman"
     if (Get-Command podman-compose -ErrorAction SilentlyContinue) {
         $IsPodmanCompose = $true
