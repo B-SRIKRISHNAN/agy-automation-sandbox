@@ -121,31 +121,42 @@ chmod +x /path/to/agy-automation/scripts/*.sh
 Navigate to **any** target Git repository on your machine and run `start-issue`:
 
 ```bash
-# Work on GitHub issue #42
-start-issue 42
+# Universal Python runner (cross-platform, recommended):
+python3 /path/to/agy-automation/start_issue.py 42
+# Or via PATH (bin/start-issue.py):
+start-issue.py 42
+
+# Legacy platform scripts:
+start-issue 42         # Linux/macOS
+start-issue.ps1 42     # Windows PowerShell
 
 # Interactive prompt (prompts for issue number)
+python3 start_issue.py
 start-issue
 ```
 
 ### CLI Flags & Arguments
 
-Both PowerShell (`start-issue.ps1`) and Bash (`start-issue.sh`) support identical configuration options:
+The universal Python runner, PowerShell (`start-issue.ps1`), and Bash (`start-issue.sh`) support identical configuration options:
 
 ```bash
 # Force container image rebuild before running
+python3 start_issue.py 42 --build     # Universal Python
 start-issue 42 -BuildSandbox          # PowerShell
 start-issue 42 --build                # Bash
 
 # Open interactive bash shell inside the sandbox instead of automated runner
+python3 start_issue.py 42 --interactive # Universal Python
 start-issue 42 -InteractiveSandbox    # PowerShell
 start-issue 42 --interactive          # Bash
 
 # Explicitly choose container engine (podman or docker)
+python3 start_issue.py 42 --engine podman # Universal Python
 start-issue 42 -ContainerEngine podman # PowerShell
 start-issue 42 --engine docker        # Bash
 
 # Dry-run mode: fetch issue & validate execution plan without creating branches or containers
+python3 start_issue.py 42 --dry-run   # Universal Python
 start-issue 42 -DryRun                # PowerShell
 start-issue 42 --dry-run              # Bash
 ```

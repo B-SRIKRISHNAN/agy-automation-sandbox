@@ -1,9 +1,15 @@
-﻿# Ephemeral runtime files
+# Ephemeral runtime files
 .gitconfig.sandbox
 .worktrees/
 ISSUE_CONTEXT.md
 m2_home/
 m2_repo/
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
 
 # OS / Editor files
 .DS_Store
