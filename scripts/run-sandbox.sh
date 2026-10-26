@@ -4,6 +4,7 @@ set -eo pipefail
 WORKTREE_NAME=""
 ISSUE_FILE=""
 TARGET_REPO=""
+INSTRUCTIONS_FILE=""
 BUILD=false
 INTERACTIVE=false
 
@@ -20,6 +21,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -TargetRepo|--target-repo)
             TARGET_REPO="$2"
+            shift 2
+            ;;
+        -InstructionsFile|--instructions-file)
+            INSTRUCTIONS_FILE="$2"
             shift 2
             ;;
         -Build|--build)
@@ -124,6 +129,7 @@ if [ ! -d "$GEMINI_PATH" ]; then
 else
     echo "[OK] Found host Antigravity credentials: $GEMINI_PATH"
 fi
+export GEMINI_PATH
 
 # 5. Check .gitconfig.sandbox in Toolkit Root (centralized so target repo stays clean)
 GIT_CONFIG_SANDBOX="$TOOLKIT_DIR/.gitconfig.sandbox"
@@ -155,10 +161,24 @@ echo "[OK] Using Git sandbox configuration: $GIT_CONFIG_SANDBOX"
 
 # 6. Optional Rebuild
 DOCKER_COMPOSE_FILE="$TOOLKIT_DIR/docker-compose.sandbox.yml"
-if [ "$BUILD" = true ]; then
+
+run_compose() {
+    if [ "$CONTAINER_ENGINE" = "podman" ]; then
+        $COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" "$@"
+    else
+        $COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" --project-directory "$TOOLKIT_DIR" "$@"
+    fi
+}
+
+IMAGE_EXISTS="$($CONTAINER_ENGINE images -q "$SANDBOX_IMAGE" 2>/dev/null || true)"
+if [ "$BUILD" = true ] || [ -z "$IMAGE_EXISTS" ]; then
     echo ""
-    echo "[INFO] Building sandbox image ($SANDBOX_IMAGE)..."
-    $COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" --project-directory "$TOOLKIT_DIR" build sandbox
+    if [ -z "$IMAGE_EXISTS" ] && [ "$BUILD" = false ]; then
+        echo "[INFO] Sandbox image ($SANDBOX_IMAGE) not found. Building for first-time use..."
+    else
+        echo "[INFO] Building sandbox image ($SANDBOX_IMAGE)..."
+    fi
+    run_compose build sandbox
 fi
 
 # Ensure executable on runner script
@@ -180,8 +200,29 @@ if [ -n "$WORKTREE_NAME" ] && [ "$INTERACTIVE" = false ]; then
     echo "[INFO] Starting automated agent scoped to: $WORKTREE_CONTAINER_PATH"
     issue_arg="${ISSUE_FILE//\\//}"
 
+    # Auto-detect instructions file if not explicitly supplied
+    if [ -z "$INSTRUCTIONS_FILE" ] && [ -n "$TARGET_REPO" ]; then
+        for candidate in "AGENT_INSTRUCTIONS.md" "AGENT_INSTRUCTIONS.MD" "agent_instructions.md"; do
+            if [ -f "$TARGET_REPO/$candidate" ]; then
+                INSTRUCTIONS_FILE="$candidate"
+                break
+            fi
+        done
+        if [ -z "$INSTRUCTIONS_FILE" ]; then
+            FOUND_INSTR="$(find "$TARGET_REPO" -maxdepth 1 -iname "agent_instructions.md" -type f 2>/dev/null | head -n 1)"
+            if [ -n "$FOUND_INSTR" ] && [ -f "$FOUND_INSTR" ]; then
+                INSTRUCTIONS_FILE="$(basename "$FOUND_INSTR")"
+            fi
+        fi
+    fi
+
+    RUNNER_ARGS=("$WORKTREE_NAME" "$issue_arg")
+    if [ -n "$INSTRUCTIONS_FILE" ]; then
+        RUNNER_ARGS+=("${INSTRUCTIONS_FILE//\\//}")
+    fi
+
     # Run container executing runner from mounted /runner/
-    $COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" --project-directory "$TOOLKIT_DIR" run --rm -w "$WORKTREE_CONTAINER_PATH" sandbox bash /runner/container-agent-runner.sh "$WORKTREE_NAME" "$issue_arg"
+    run_compose run --rm -w "$WORKTREE_CONTAINER_PATH" sandbox bash /runner/container-agent-runner.sh "${RUNNER_ARGS[@]}"
     EXIT_CODE=$?
 
     # Post-run: repair worktree on host
@@ -206,6 +247,6 @@ else
     echo "----------------------------------------------------------"
     echo ""
     echo "[INFO] Entering sandbox container shell (exit or Ctrl+D to leave)..."
-    $COMPOSE_CMD -f "$DOCKER_COMPOSE_FILE" --project-directory "$TOOLKIT_DIR" run --rm sandbox bash
+    run_compose run --rm sandbox bash
     exit $?
 fi

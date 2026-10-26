@@ -30,7 +30,7 @@ services:
       # Mount runner script from toolkit into /runner
       - ${TOOLKIT_DIR:-.}/scripts/container-agent-runner.sh:/runner/container-agent-runner.sh:ro
       # Mount host Antigravity credentials into container (Windows & Linux compatible)
-      - ${USERPROFILE:-$HOME}/.gemini:/root/.gemini
+      - ${GEMINI_PATH:-~/.gemini}:/root/.gemini
       # Mount sandbox git configuration from toolkit
       - ${TOOLKIT_DIR:-.}/.gitconfig.sandbox:/root/.gitconfig
       # Isolate sandbox MCP configuration so host MCP servers do not spawn inside container

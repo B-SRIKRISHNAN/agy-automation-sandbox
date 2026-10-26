@@ -161,11 +161,18 @@ $BranchName = "issue-$IssueNumber"
 $WorktreesContainer = Join-Path $TargetRepo ".worktrees"
 $WorktreePath = Join-Path $WorktreesContainer $WorktreeName
 
+# Check for repository agent instructions (AGENT_INSTRUCTIONS.md, case-insensitive)
+$agentInstructionsCandidate = Get-ChildItem -Path $TargetRepo -Depth 0 -File -ErrorAction SilentlyContinue | Where-Object {
+    $_.Name -like "agent_instructions.md" -or $_.Name -like "AGENT_INSTRUCTIONS.MD" -or $_.Name -like "AGENT_INSTRUCTIONS.md"
+} | Select-Object -First 1
+$agentInstructionsName = if ($agentInstructionsCandidate) { $agentInstructionsCandidate.Name } else { "" }
+
 Write-Host "`n[START] Starting issue lifecycle for Issue #$IssueNumber..." -ForegroundColor Cyan
 Write-Host "Target Project: $TargetRepo" -ForegroundColor Gray
 Write-Host "Base Branch   : $CurrentBranch" -ForegroundColor Gray
 Write-Host "Worktree Name : $WorktreeName" -ForegroundColor Gray
 Write-Host "Branch Name   : $BranchName" -ForegroundColor Gray
+Write-Host "Agent Instr.  : $(if ($agentInstructionsName) { $agentInstructionsName } else { 'None (standard workflow)' })" -ForegroundColor Gray
 
 # ==========================================================
 # STEP 1: Fetch issue details & confirm with user
@@ -208,6 +215,9 @@ $issueContextPath = Join-Path $WorktreePath "ISSUE_CONTEXT.md"
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 [System.IO.File]::WriteAllText($issueContextPath, $issueData.Context, $utf8NoBom)
 Write-Host "[OK] Injected issue context into worktree: $issueContextPath" -ForegroundColor Green
+if ($agentInstructionsName) {
+    Write-Host "[OK] Active repository agent instructions: $agentInstructionsName" -ForegroundColor Green
+}
 
 # ==========================================================
 # STEP 3: Run Docker Sandbox with automated agy
@@ -220,6 +230,9 @@ $sandboxParams = @{
     WorktreeName = $WorktreeName
     IssueFile    = $issueRelFile
     TargetRepo   = $TargetRepo
+}
+if ($agentInstructionsName) {
+    $sandboxParams["InstructionsFile"] = $agentInstructionsName
 }
 if ($BuildSandbox) { $sandboxParams["Build"] = [switch]$true }
 if ($InteractiveSandbox) { $sandboxParams["Interactive"] = [switch]$true }

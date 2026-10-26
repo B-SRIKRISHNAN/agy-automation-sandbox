@@ -99,6 +99,14 @@ if (-not (Get-Command agy -ErrorAction SilentlyContinue)) {
 # 3. Generate detailed summary with agy
 Write-Host "`n[3/3] Generating AI Code Review Summary using agy..." -ForegroundColor Cyan
 
+# Check for repository agent instructions (AGENT_INSTRUCTIONS.md, case-insensitive)
+$reviewInstrCandidate = Get-ChildItem -Path $RepoRoot -Depth 0 -File -ErrorAction SilentlyContinue | Where-Object {
+    $_.Name -like "agent_instructions.md" -or $_.Name -like "AGENT_INSTRUCTIONS.MD" -or $_.Name -like "AGENT_INSTRUCTIONS.md"
+} | Select-Object -First 1
+$complianceSection = if ($reviewInstrCandidate) {
+    "`n`n### 5. Repository Standards & Agent Instructions Compliance`n(Assess whether the code, documentation, and tests comply with the sequence and standards in $($reviewInstrCandidate.Name))"
+} else { "" }
+
 $reviewPrompt = @"
 You are a senior principal engineer performing a code review. Analyze the following commits and diff for feature branch '$BranchName' targeting '$BaseBranch'.
 Generate a comprehensive, crystal-clear review formatted with markdown headings:
@@ -113,7 +121,7 @@ Generate a comprehensive, crystal-clear review formatted with markdown headings:
 (Dependencies, database migrations, configuration updates, potential regressions)
 
 ### 4. Verification & Testing Checklist
-(Recommended steps to test and verify these changes)
+(Recommended steps to test and verify these changes)$complianceSection
 
 ---
 Commits:

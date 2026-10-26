@@ -147,12 +147,31 @@ WORKTREE_NAME="worktree-issue-$ISSUE_NUMBER"
 BRANCH_NAME="issue-$ISSUE_NUMBER"
 WORKTREE_PATH="$TARGET_REPO/.worktrees/$WORKTREE_NAME"
 
+# Check for repository agent instructions (AGENT_INSTRUCTIONS.md, case-insensitive)
+AGENT_INSTRUCTIONS_FILE=""
+AGENT_INSTRUCTIONS_NAME=""
+for name in "AGENT_INSTRUCTIONS.md" "AGENT_INSTRUCTIONS.MD" "agent_instructions.md"; do
+    if [ -f "$TARGET_REPO/$name" ]; then
+        AGENT_INSTRUCTIONS_FILE="$TARGET_REPO/$name"
+        AGENT_INSTRUCTIONS_NAME="$name"
+        break
+    fi
+done
+if [ -z "$AGENT_INSTRUCTIONS_FILE" ]; then
+    FOUND_INSTR="$(find "$TARGET_REPO" -maxdepth 1 -iname "agent_instructions.md" -type f 2>/dev/null | head -n 1)"
+    if [ -n "$FOUND_INSTR" ] && [ -f "$FOUND_INSTR" ]; then
+        AGENT_INSTRUCTIONS_FILE="$FOUND_INSTR"
+        AGENT_INSTRUCTIONS_NAME="$(basename "$FOUND_INSTR")"
+    fi
+fi
+
 echo ""
 echo "[START] Starting issue lifecycle for Issue #$ISSUE_NUMBER..."
 echo "Target Project   : $TARGET_REPO"
 echo "Base Branch      : $CURRENT_BRANCH"
 echo "Worktree Name    : $WORKTREE_NAME"
 echo "Branch Name      : $BRANCH_NAME"
+echo "Agent Instr.     : ${AGENT_INSTRUCTIONS_NAME:-None (standard workflow)}"
 echo "Container Engine : $ENGINE"
 
 # ==========================================================
@@ -175,6 +194,7 @@ if [ "$DRY_RUN_FLAG" = true ]; then
     echo "  - Base Branch     : $CURRENT_BRANCH"
     echo "  - Worktree Branch : $BRANCH_NAME"
     echo "  - Worktree Path   : $WORKTREE_PATH"
+    echo "  - Agent Instr.    : ${AGENT_INSTRUCTIONS_NAME:-None (standard agent workflow)}"
     echo "  - Container Engine: ${CONTAINER_ENGINE:-auto-detect ($ENGINE)}"
     echo "  - Sandbox Mode    : $(if [ "$INTERACTIVE_FLAG" = true ]; then echo 'Interactive bash shell'; else echo 'Automated Antigravity agent runner'; fi)"
     echo "  - Build Sandbox   : $BUILD_FLAG"
@@ -202,12 +222,19 @@ if [ -f "$TMP_CONTEXT_FILE" ]; then
     echo "[OK] Injected issue context into worktree: $ISSUE_CONTEXT_DEST"
 fi
 
+if [ -n "$AGENT_INSTRUCTIONS_NAME" ]; then
+    echo "[OK] Active repository agent instructions: $AGENT_INSTRUCTIONS_NAME"
+fi
+
 # ==========================================================
 # STEP 3: Run Sandbox with automated agy
 # ==========================================================
 echo ""
 echo ">>> [STEP 3/5] Launching Sandbox & running Antigravity (agy)..."
 SANDBOX_ARGS=("-WorktreeName" "$WORKTREE_NAME" "-IssueFile" ".worktrees/$WORKTREE_NAME/ISSUE_CONTEXT.md" "-TargetRepo" "$TARGET_REPO")
+if [ -n "$AGENT_INSTRUCTIONS_NAME" ]; then
+    SANDBOX_ARGS+=("-InstructionsFile" "$AGENT_INSTRUCTIONS_NAME")
+fi
 if [ "$BUILD_FLAG" = true ]; then
     SANDBOX_ARGS+=("-Build")
 fi

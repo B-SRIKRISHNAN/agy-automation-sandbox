@@ -80,6 +80,29 @@ fi
 echo ""
 echo "[3/3] Generating AI Code Review Summary using agy..."
 
+# Check for repository agent instructions (AGENT_INSTRUCTIONS.md, case-insensitive)
+INSTRUCTIONS_CHECK_SECTION=""
+INSTRUCTIONS_FILE_REVIEW=""
+for name in "AGENT_INSTRUCTIONS.md" "AGENT_INSTRUCTIONS.MD" "agent_instructions.md"; do
+    if [ -f "$REPO_ROOT/$name" ]; then
+        INSTRUCTIONS_FILE_REVIEW="$REPO_ROOT/$name"
+        break
+    fi
+done
+if [ -z "$INSTRUCTIONS_FILE_REVIEW" ]; then
+    FOUND_INSTR="$(find "$REPO_ROOT" -maxdepth 1 -iname "agent_instructions.md" -type f 2>/dev/null | head -n 1)"
+    if [ -n "$FOUND_INSTR" ] && [ -f "$FOUND_INSTR" ]; then
+        INSTRUCTIONS_FILE_REVIEW="$FOUND_INSTR"
+    fi
+fi
+
+if [ -n "$INSTRUCTIONS_FILE_REVIEW" ] && [ -f "$INSTRUCTIONS_FILE_REVIEW" ]; then
+    INSTR_BASENAME="$(basename "$INSTRUCTIONS_FILE_REVIEW")"
+    INSTRUCTIONS_CHECK_SECTION="
+### 5. Repository Standards & Agent Instructions Compliance
+(Assess whether the code, documentation, and tests comply with the sequence and standards in $INSTR_BASENAME)"
+fi
+
 REVIEW_PROMPT="You are a senior principal engineer performing a code review. Analyze the following commits and diff for feature branch '$BRANCH_NAME' targeting '$BASE_BRANCH'.
 Generate a comprehensive, crystal-clear review formatted with markdown headings:
 
@@ -93,7 +116,7 @@ Generate a comprehensive, crystal-clear review formatted with markdown headings:
 (Dependencies, database migrations, configuration updates, potential regressions)
 
 ### 4. Verification & Testing Checklist
-(Recommended steps to test and verify these changes)
+(Recommended steps to test and verify these changes)$INSTRUCTIONS_CHECK_SECTION
 
 ---
 Commits:

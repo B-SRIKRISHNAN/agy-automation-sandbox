@@ -180,8 +180,15 @@ Rebuild the image with `start-issue <id> --build` or `docker compose -f docker-c
 - **CPU quota**: Capped at `4.0` cores.
 - **tmpfs mounts**: Mounts `/tmp`, `/root/.npm`, and `/root/.cache` in memory so ephemeral build artifacts do not inflate host disk images (e.g., WSL2 VHDX files).
 
-### 3. Agent Instructions & Rules
-Autonomous agent behavior can be customized in [scripts/container-agent-runner.sh](file:///D:/projects/Toolkits/agy-automation/scripts/container-agent-runner.sh#L37-L53). You can adjust the system prompt, prompt guidelines, coding standards, or commit message formatting.
+### 3. Agent Instructions & Repository Standards (`AGENT_INSTRUCTIONS.md`)
+The toolkit automatically detects repository-specific standards and AI workflow instructions defined in an `AGENT_INSTRUCTIONS.md` (or `agent_instructions.md` / `AGENT_INSTRUCTIONS.MD`) file placed in your target project's root:
+
+- **Automatic Discovery**: When present in the target repository root, the toolkit detects the file and passes its guidelines into the sandboxed agent.
+- **Strict Sequence & Standards**: The agent first analyzes the issue context and codebase, and then strictly follows the workflow sequence specified in `AGENT_INSTRUCTIONS.md`—ensuring documentation, tests, and code writing are executed in the exact prescribed order to maintain standard across every agent run.
+- **Graceful Fallback**: If `AGENT_INSTRUCTIONS.md` is not present, the agent automatically proceeds with the standard, battle-tested issue resolution workflow without interruption.
+- **Review Verification**: The AI code reviewer in the merge step also assesses compliance with the repository instructions before you approve the merge.
+
+Autonomous agent behavior and prompt templates can also be further customized in [scripts/container-agent-runner.sh](file:///D:/projects/Toolkits/agy-automation/scripts/container-agent-runner.sh#L37-L53).
 
 ---
 

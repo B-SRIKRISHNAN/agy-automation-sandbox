@@ -29,6 +29,7 @@ param (
     [string]$WorktreeName = "",
     [string]$IssueFile = "",
     [string]$TargetRepo = "",
+    [string]$InstructionsFile = "",
     [switch]$Build,
     [switch]$Interactive
 )
@@ -100,6 +101,7 @@ if (-not (Test-Path $GeminiPath)) {
 } else {
     Write-Host "[OK] Found host Antigravity credentials: $GeminiPath" -ForegroundColor Green
 }
+$env:GEMINI_PATH = ($GeminiPath -replace '\\', '/')
 
 # 5. Check .gitconfig.sandbox in Toolkit Root (centralized so target repo stays clean)
 $GitConfigSandbox = Join-Path $ToolkitRoot ".gitconfig.sandbox"
@@ -141,14 +143,19 @@ function Invoke-SandboxCompose {
     if ($IsPodmanCompose) {
         & podman-compose -f $DockerComposeFile $ComposeArgs
     } elseif ($ContainerEngine -eq "podman") {
-        & podman compose -f $DockerComposeFile --project-directory $ToolkitRoot $ComposeArgs
+        & podman compose -f $DockerComposeFile $ComposeArgs
     } else {
         & docker compose -f $DockerComposeFile --project-directory $ToolkitRoot $ComposeArgs
     }
 }
 
-if ($Build) {
-    Write-Host "`n[INFO] Building sandbox image ($env:SANDBOX_IMAGE)..." -ForegroundColor Cyan
+$imageExists = (& $ContainerEngine images -q $env:SANDBOX_IMAGE 2>$null)
+if ($Build -or -not $imageExists) {
+    if (-not $imageExists -and -not $Build) {
+        Write-Host "`n[INFO] Sandbox image ($env:SANDBOX_IMAGE) not found. Building for first-time use..." -ForegroundColor Cyan
+    } else {
+        Write-Host "`n[INFO] Building sandbox image ($env:SANDBOX_IMAGE)..." -ForegroundColor Cyan
+    }
     Invoke-SandboxCompose @("build", "sandbox")
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[ERROR] Container build failed with exit code $LASTEXITCODE." -ForegroundColor Red
@@ -178,8 +185,24 @@ if ($WorktreeName -and -not $Interactive) {
     Write-Host "`n[INFO] Starting automated agent scoped to: $worktreeContainerPath" -ForegroundColor Cyan
     $issueArg = if ($IssueFile) { $IssueFile.Replace("\", "/") } else { "" }
     
+    # Auto-detect instructions file if not explicitly supplied
+    if (-not $InstructionsFile -and $TargetRepo) {
+        $foundInstr = Get-ChildItem -Path $TargetRepo -Depth 0 -File -ErrorAction SilentlyContinue | Where-Object {
+            $_.Name -like "agent_instructions.md" -or $_.Name -like "AGENT_INSTRUCTIONS.MD" -or $_.Name -like "AGENT_INSTRUCTIONS.md"
+        } | Select-Object -First 1
+        if ($foundInstr) {
+            $InstructionsFile = $foundInstr.Name
+        }
+    }
+
+    $runnerArgs = @("run", "--rm", "-w", $worktreeContainerPath, "sandbox", "bash", "/runner/container-agent-runner.sh", "$WorktreeName", "$issueArg")
+    if ($InstructionsFile) {
+        $instructionsArg = $InstructionsFile.Replace("\", "/")
+        $runnerArgs += "$instructionsArg"
+    }
+
     # Run container executing runner from mounted /runner/
-    Invoke-SandboxCompose @("run", "--rm", "-w", $worktreeContainerPath, "sandbox", "bash", "/runner/container-agent-runner.sh", "$WorktreeName", "$issueArg")
+    Invoke-SandboxCompose $runnerArgs
     $exitCode = $LASTEXITCODE
 
     # Post-run: repair worktree on host
