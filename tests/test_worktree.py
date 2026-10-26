@@ -1,8 +1,14 @@
 """Tests for worktree context injection and line endings."""
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+_src = Path(__file__).resolve().parent.parent / "src"
+if str(_src) not in sys.path:
+    sys.path.insert(0, str(_src))
+
 from agy_automation.worktree import inject_issue_context
 
 
@@ -15,10 +21,6 @@ class TestWorktree(unittest.TestCase):
             dest = inject_issue_context(wt_path, content)
 
             self.assertTrue(dest.is_file())
-            raw_bytes = dest.read_bytes()
-            # Must not contain CRLF bytes (\r\n) when written with newline='\n'
-            # Note: content had \r\n, but when we write strings with \n and newline='\n',
-            # let's verify Unix line endings
             text = dest.read_text(encoding="utf-8")
             self.assertIn("Line 1", text)
 

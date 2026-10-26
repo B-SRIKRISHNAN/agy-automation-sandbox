@@ -1,6 +1,13 @@
 """Tests for issue payload parsing and markdown context generation."""
 
+import sys
 import unittest
+from pathlib import Path
+
+_src = Path(__file__).resolve().parent.parent / "src"
+if str(_src) not in sys.path:
+    sys.path.insert(0, str(_src))
+
 from agy_automation.fetch_issue import build_markdown_context
 
 

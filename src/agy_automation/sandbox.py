@@ -145,7 +145,6 @@ def run_sandbox(
             print(f"\n{Colors.CYAN}[INFO] Building sandbox image ({image_name})...{Colors.RESET}")
 
         build_cmd = build_compose_invocation(["build", "sandbox"])
-        # Live streaming without capture_output
         build_res = subprocess.run(build_cmd, env=env)
         if build_res.returncode != 0:
             print(f"{Colors.RED}[ERROR] Container build failed with exit code {build_res.returncode}.{Colors.RESET}")
@@ -189,8 +188,6 @@ def run_sandbox(
             runner_args.append(resolved_instr.replace("\\", "/"))
 
         run_cmd = build_compose_invocation(runner_args)
-
-        # Execute container run with DIRECT terminal I/O (no capture_output) for live streaming
         run_res = subprocess.run(run_cmd, env=env)
         exit_code = run_res.returncode
 
@@ -220,7 +217,7 @@ def run_sandbox(
         return run_res.returncode
 
 
-def main():
+def main() -> int:
     """Standalone run-sandbox CLI entry point."""
     import argparse
     parser = argparse.ArgumentParser(description="Container Sandbox Runner")
@@ -242,8 +239,8 @@ def main():
         build=args.build,
         interactive=args.interactive,
     )
-    sys.exit(exit_code)
+    return exit_code
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

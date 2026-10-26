@@ -11,6 +11,8 @@ from .git_utils import get_current_branch, run_git
 def push_changes(
     branch_name: str = "",
     remote: str = "origin",
+    auto_approve: bool = False,
+    interactive: bool = True,
     repo_dir: Optional[Path] = None,
 ) -> bool:
     """Fetch remote state, inspect unpushed commits, request confirmation, and push with -u."""
@@ -51,10 +53,15 @@ def push_changes(
     for c in unpushed_commits:
         print(f"{Colors.WHITE}  * {c}{Colors.RESET}")
 
-    # 3. Request confirmation
-    try:
-        resp = input(f"\n{Colors.YELLOW}Do you approve pushing these changes to '{remote}/{branch_name}'? (y/N): {Colors.RESET}").strip()
-    except (EOFError, KeyboardInterrupt):
+    # 3. Request confirmation unless auto_approve
+    if auto_approve:
+        resp = "y"
+    elif interactive:
+        try:
+            resp = input(f"\n{Colors.YELLOW}Do you approve pushing these changes to '{remote}/{branch_name}'? (y/N): {Colors.RESET}").strip()
+        except (EOFError, KeyboardInterrupt):
+            resp = ""
+    else:
         resp = ""
 
     if resp and resp.lower() in ("y", "yes"):
@@ -71,13 +78,17 @@ def push_changes(
         return False
 
 
-def main():
+def main() -> int:
     """Standalone push-changes CLI entry point."""
+    if "-h" in sys.argv or "--help" in sys.argv:
+        print("Usage: python -m agy_automation.push_changes [branch_name] [remote]")
+        return 0
+
     br = sys.argv[1] if len(sys.argv) > 1 else ""
     remote = sys.argv[2] if len(sys.argv) > 2 else "origin"
     pushed = push_changes(br, remote)
-    sys.exit(0 if pushed else 1)
+    return 0 if pushed else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

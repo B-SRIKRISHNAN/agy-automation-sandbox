@@ -24,6 +24,8 @@ def review_and_merge(
     worktree_name: str,
     branch_name: str,
     base_branch: str = "",
+    auto_approve: bool = False,
+    interactive: bool = True,
     repo_dir: Optional[Path] = None,
 ) -> bool:
     """Generate an AI code review with agy, request approval, and perform linear/FF merge."""
@@ -120,12 +122,17 @@ Diff Details:
         print(f"{Colors.GRAY}Showing raw git diff stat instead:\n{diff_stat}{Colors.RESET}")
     print(f"{Colors.CYAN}============================================================\n{Colors.RESET}")
 
-    # 4. Prompt user for merge approval
-    try:
-        approval = input(
-            f"{Colors.YELLOW}Do you approve merging branch '{branch_name}' into '{base_branch}'? (y/N): {Colors.RESET}"
-        ).strip()
-    except (EOFError, KeyboardInterrupt):
+    # 4. Prompt user for merge approval unless auto_approve
+    if auto_approve:
+        approval = "y"
+    elif interactive:
+        try:
+            approval = input(
+                f"{Colors.YELLOW}Do you approve merging branch '{branch_name}' into '{base_branch}'? (y/N): {Colors.RESET}"
+            ).strip()
+        except (EOFError, KeyboardInterrupt):
+            approval = ""
+    else:
         approval = ""
 
     if approval and approval.lower() in ("y", "yes"):
@@ -140,7 +147,7 @@ Diff Details:
         print(f"\n{Colors.CYAN}[INFO] Checking out base branch '{base_branch}'...{Colors.RESET}")
         run_git(["checkout", base_branch], cwd=repo_dir, capture_output=False)
 
-        print(f"{Colors.CYAN}[INFO] Merging branch '{branch_name}' into '{base_branch}' (fast-forward)...{Colors.RESET}")
+        print(f"\n{Colors.CYAN}[INFO] Merging branch '{branch_name}' into '{base_branch}' (fast-forward)...{Colors.RESET}")
         ff_res = run_git(["merge", "--ff-only", branch_name], cwd=repo_dir, capture_output=False)
         if ff_res.returncode == 0:
             print(f"{Colors.GREEN}[SUCCESS] Fast-forward merge completed.{Colors.RESET}")
@@ -165,34 +172,39 @@ Diff Details:
         return True
     else:
         print(f"\n{Colors.YELLOW}[INFO] Merge declined by user.{Colors.RESET}")
-        try:
-            keep_choice = input(
-                f"{Colors.YELLOW}Keep worktree '{worktree_name}' for manual inspection? (Y/n): {Colors.RESET}"
-            ).strip()
-        except (EOFError, KeyboardInterrupt):
-            keep_choice = "y"
+        if interactive and not auto_approve:
+            try:
+                keep_choice = input(
+                    f"{Colors.YELLOW}Keep worktree '{worktree_name}' for manual inspection? (Y/n): {Colors.RESET}"
+                ).strip()
+            except (EOFError, KeyboardInterrupt):
+                keep_choice = "y"
 
-        if keep_choice and keep_choice.lower() in ("n", "no"):
-            print(f"{Colors.CYAN}[INFO] Cleaning up worktree and temporary branch upon user request...{Colors.RESET}")
-            cleanup_worktree(worktree_name, branch_name, force=True, repo_dir=repo_dir)
-        else:
-            print(f"{Colors.GREEN}[INFO] Worktree preserved at .worktrees/{worktree_name} on branch '{branch_name}'.{Colors.RESET}")
+            if keep_choice and keep_choice.lower() in ("n", "no"):
+                print(f"{Colors.CYAN}[INFO] Cleaning up worktree and temporary branch upon user request...{Colors.RESET}")
+                cleanup_worktree(worktree_name, branch_name, force=True, repo_dir=repo_dir)
+            else:
+                print(f"{Colors.GREEN}[INFO] Worktree preserved at .worktrees/{worktree_name} on branch '{branch_name}'.{Colors.RESET}")
         return False
 
 
-def main():
+def main() -> int:
     """Standalone review-merge CLI entry point."""
+    if "-h" in sys.argv or "--help" in sys.argv:
+        print("Usage: python -m agy_automation.review_merge <worktree_name> <branch_name> [base_branch]")
+        return 0
+
     if len(sys.argv) < 3:
         print(f"{Colors.RED}[ERROR] WorktreeName and BranchName parameters are required.{Colors.RESET}")
         print("Usage: python -m agy_automation.review_merge <worktree_name> <branch_name> [base_branch]")
-        sys.exit(1)
+        return 1
 
     wt = sys.argv[1]
     br = sys.argv[2]
     base = sys.argv[3] if len(sys.argv) > 3 else ""
     merged = review_and_merge(wt, br, base)
-    sys.exit(0 if merged else 1)
+    return 0 if merged else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

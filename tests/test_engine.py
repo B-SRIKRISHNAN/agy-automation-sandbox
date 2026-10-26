@@ -1,7 +1,13 @@
 """Tests for container engine detection and name sanitization."""
 
+import sys
 import unittest
 from pathlib import Path
+
+_src = Path(__file__).resolve().parent.parent / "src"
+if str(_src) not in sys.path:
+    sys.path.insert(0, str(_src))
+
 from agy_automation.engine import derive_container_names, detect_container_engine, resolve_compose_cmd
 
 

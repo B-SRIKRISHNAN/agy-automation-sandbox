@@ -21,6 +21,8 @@ def create_worktree(
     branch_name: str = "agent-branch1",
     base_branch: str = "",
     force: bool = False,
+    auto_approve: bool = False,
+    interactive: bool = True,
     repo_dir: Optional[Path] = None,
 ) -> Path:
     """Create an isolated Git worktree and branch off base_branch."""
@@ -62,14 +64,15 @@ def create_worktree(
     )
 
     if worktree_path.exists() or is_registered:
-        should_remove = force
-        if not force:
-            print(f"\n{Colors.YELLOW}[WARNING] Worktree '{worktree_name}' already exists at: {worktree_path}{Colors.RESET}")
-            try:
-                resp = input(f"{Colors.YELLOW}Do you want to remove the existing worktree and recreate it? (y/N): {Colors.RESET}").strip()
-                should_remove = resp.lower() in ("y", "yes")
-            except (EOFError, KeyboardInterrupt):
-                should_remove = False
+        should_remove = force or auto_approve
+        if not force and not auto_approve:
+            if interactive:
+                print(f"\n{Colors.YELLOW}[WARNING] Worktree '{worktree_name}' already exists at: {worktree_path}{Colors.RESET}")
+                try:
+                    resp = input(f"{Colors.YELLOW}Do you want to remove the existing worktree and recreate it? (y/N): {Colors.RESET}").strip()
+                    should_remove = resp.lower() in ("y", "yes")
+                except (EOFError, KeyboardInterrupt):
+                    should_remove = False
 
             if not should_remove:
                 raise RuntimeError("Worktree removal declined. Creation cancelled.")
@@ -85,19 +88,20 @@ def create_worktree(
     # Check if branch already exists
     branch_exists = is_branch_existing(branch_name, repo_dir)
     if branch_exists:
-        should_delete_branch = force
-        if not force:
-            print(f"\n{Colors.YELLOW}[WARNING] Branch '{branch_name}' already exists in local Git repository.{Colors.RESET}")
-            try:
-                resp = input(
-                    f"{Colors.YELLOW}Do you want to delete branch '{branch_name}' and recreate it fresh from '{base_branch}'? (y/N): {Colors.RESET}"
-                ).strip()
-                should_delete_branch = resp.lower() in ("y", "yes")
-            except (EOFError, KeyboardInterrupt):
-                should_delete_branch = False
+        should_delete_branch = force or auto_approve
+        if not force and not auto_approve:
+            if interactive:
+                print(f"\n{Colors.YELLOW}[WARNING] Branch '{branch_name}' already exists in local Git repository.{Colors.RESET}")
+                try:
+                    resp = input(
+                        f"{Colors.YELLOW}Do you want to delete branch '{branch_name}' and recreate it fresh from '{base_branch}'? (y/N): {Colors.RESET}"
+                    ).strip()
+                    should_delete_branch = resp.lower() in ("y", "yes")
+                except (EOFError, KeyboardInterrupt):
+                    should_delete_branch = False
 
-            if not should_delete_branch:
-                print(f"{Colors.CYAN}[INFO] Preserving existing branch '{branch_name}'. Will attach worktree to it.{Colors.RESET}")
+                if not should_delete_branch:
+                    print(f"{Colors.CYAN}[INFO] Preserving existing branch '{branch_name}'. Will attach worktree to it.{Colors.RESET}")
 
         if should_delete_branch:
             print(f"{Colors.CYAN}[INFO] Deleting existing branch '{branch_name}'...{Colors.RESET}")
@@ -130,8 +134,12 @@ def inject_issue_context(worktree_path: Path, context_content: str) -> Path:
     return dest
 
 
-def main():
+def main() -> int:
     """Standalone create-worktree CLI entry point."""
+    if "-h" in sys.argv or "--help" in sys.argv:
+        print("Usage: python -m agy_automation.create_worktree [worktree_name] [branch_name] [base_branch] [--force]")
+        return 0
+
     wt_name = sys.argv[1] if len(sys.argv) > 1 else "agent-worktree1"
     br_name = sys.argv[2] if len(sys.argv) > 2 else "agent-branch1"
     base_br = sys.argv[3] if len(sys.argv) > 3 else ""
@@ -139,11 +147,11 @@ def main():
 
     try:
         create_worktree(wt_name, br_name, base_br, force=force)
-        sys.exit(0)
+        return 0
     except Exception as exc:
         print(f"{Colors.RED}[ERROR] {exc}{Colors.RESET}")
-        sys.exit(1)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

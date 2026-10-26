@@ -100,13 +100,18 @@ def cleanup_worktree(
     return True
 
 
-def main():
+def main() -> int:
     """Standalone cleanup-worktree CLI entry point."""
+    if "-h" in sys.argv or "--help" in sys.argv:
+        print("Usage: python -m agy_automation.cleanup_worktree [worktree_name] [branch_name] [--force]")
+        return 0
+
     wt_name = sys.argv[1] if len(sys.argv) > 1 else "agent-worktree1"
     br_name = sys.argv[2] if len(sys.argv) > 2 else "agent-branch1"
     force = "-Force" in sys.argv or "--force" in sys.argv
-    cleanup_worktree(wt_name, br_name, force=force)
+    success = cleanup_worktree(wt_name, br_name, force=force)
+    return 0 if success else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

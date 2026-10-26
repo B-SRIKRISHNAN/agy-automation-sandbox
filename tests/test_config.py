@@ -1,8 +1,14 @@
 """Tests for config and environment detection."""
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+_src = Path(__file__).resolve().parent.parent / "src"
+if str(_src) not in sys.path:
+    sys.path.insert(0, str(_src))
+
 from agy_automation.config import (
     ensure_repo_exclude,
     find_agent_instructions,

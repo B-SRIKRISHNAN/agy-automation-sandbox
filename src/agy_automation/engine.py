@@ -21,7 +21,6 @@ def verify_agy_installed() -> str:
 
 def derive_container_names(target_repo: Path) -> Tuple[str, str]:
     """Derive container and image name from target project directory."""
-    # Handle both Windows backslashes and POSIX slashes portably
     normalized = str(target_repo).replace("\\", "/").rstrip("/")
     leaf_name = normalized.split("/")[-1] if "/" in normalized else normalized
     clean_name = re.sub(r"[^a-z0-9_-]", "-", leaf_name.lower()).strip("-")
@@ -78,14 +77,12 @@ def detect_container_engine(forced_engine: str = "auto") -> Tuple[str, str]:
 def resolve_compose_cmd(engine_type: str) -> List[str]:
     """Resolve the compose invocation list for the detected engine."""
     if engine_type == "podman":
-        # Check podman compose first
         podman_path = shutil.which("podman")
         if podman_path:
             res = subprocess.run([podman_path, "compose", "version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             if res.returncode == 0:
                 return [podman_path, "compose"]
 
-        # Check podman-compose binary
         podman_compose_path = shutil.which("podman-compose")
         if podman_compose_path:
             return [podman_compose_path]

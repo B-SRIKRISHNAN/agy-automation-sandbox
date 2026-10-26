@@ -34,17 +34,20 @@ class Colors:
 
 def get_toolkit_root() -> Path:
     """Locate the toolkit directory where scripts and docker-compose.sandbox.yml live."""
-    # Priority 1: Check relative to this module (agy_automation/ -> parent)
-    module_root = Path(__file__).resolve().parent.parent
-    if (module_root / "docker-compose.sandbox.yml").is_file() or (module_root / "scripts").is_dir():
-        return module_root
+    # Priority 1: Traverse upwards from this module's directory
+    current = Path(__file__).resolve().parent
+    for p in [current] + list(current.parents):
+        if (p / "docker-compose.sandbox.yml").is_file() or (p / "scripts").is_dir():
+            return p
 
-    # Priority 2: Check current working directory
+    # Priority 2: Check current working directory and its parents
     cwd = Path.cwd().resolve()
-    if (cwd / "docker-compose.sandbox.yml").is_file() or (cwd / "scripts").is_dir():
-        return cwd
+    for p in [cwd] + list(cwd.parents):
+        if (p / "docker-compose.sandbox.yml").is_file() or (p / "scripts").is_dir():
+            return p
 
-    return module_root
+    # Fallback to root (parent of parent of src/agy_automation)
+    return Path(__file__).resolve().parent.parent.parent
 
 
 def get_target_repo(start_dir: Optional[Path] = None) -> Path:
@@ -74,7 +77,6 @@ def ensure_repo_exclude(target_repo: Path) -> bool:
     """Ensure .worktrees/ and ISSUE_CONTEXT.md are locally excluded in .git/info/exclude."""
     git_dir = target_repo / ".git"
     if not git_dir.is_dir():
-        # Might be a worktree or submodule with a .git file
         return False
 
     exclude_file = git_dir / "info" / "exclude"

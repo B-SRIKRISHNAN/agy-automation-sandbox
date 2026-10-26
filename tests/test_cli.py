@@ -1,6 +1,13 @@
 """Tests for CLI parsing and flag normalization."""
 
+import sys
 import unittest
+from pathlib import Path
+
+_src = Path(__file__).resolve().parent.parent / "src"
+if str(_src) not in sys.path:
+    sys.path.insert(0, str(_src))
+
 from agy_automation.cli import normalize_args, parse_cli_args
 
 

@@ -28,6 +28,7 @@ def run_pipeline(
     interactive: bool = False,
     dry_run: bool = False,
     engine: str = "auto",
+    auto_approve: bool = False,
     target_repo: Optional[Path] = None,
 ) -> int:
     """Execute the end-to-end autonomous issue-resolution lifecycle."""
@@ -69,7 +70,10 @@ def run_pipeline(
 
     # Prompt for Issue Number if not provided
     if issue_number <= 0:
-        issue_number = prompt_issue_number(current_branch, engine_desc)
+        try:
+            issue_number = prompt_issue_number(current_branch, engine_desc)
+        except Exception:
+            return 1
 
     worktree_name = f"worktree-issue-{issue_number}"
     branch_name = f"issue-{issue_number}"
@@ -91,7 +95,11 @@ def run_pipeline(
     # ==========================================================
     print(f"\n{Colors.CYAN}>>> [STEP 1/5] Fetching issue details from GitHub...{Colors.RESET}")
     try:
-        issue_data = fetch_and_confirm_issue(issue_number)
+        issue_data = fetch_and_confirm_issue(
+            issue_number,
+            auto_approve=auto_approve,
+            interactive=not auto_approve,
+        )
     except Exception as exc:
         print(f"{Colors.RED}[ERROR] {exc}{Colors.RESET}")
         return 1
@@ -123,6 +131,8 @@ def run_pipeline(
             worktree_name=worktree_name,
             branch_name=branch_name,
             base_branch=current_branch,
+            auto_approve=auto_approve,
+            interactive=not auto_approve,
             repo_dir=target_repo,
         )
     except Exception as exc:
@@ -163,6 +173,8 @@ def run_pipeline(
             worktree_name=worktree_name,
             branch_name=branch_name,
             base_branch=current_branch,
+            auto_approve=auto_approve,
+            interactive=not auto_approve,
             repo_dir=target_repo,
         )
     except Exception as exc:
@@ -174,7 +186,13 @@ def run_pipeline(
     # ==========================================================
     if merged:
         print(f"\n{Colors.CYAN}>>> [STEP 5/5] Push changes to remote...{Colors.RESET}")
-        push_changes(branch_name=current_branch, remote="origin", repo_dir=target_repo)
+        push_changes(
+            branch_name=current_branch,
+            remote="origin",
+            auto_approve=auto_approve,
+            interactive=not auto_approve,
+            repo_dir=target_repo,
+        )
     else:
         print(f"\n{Colors.YELLOW}[INFO] Skipping push since changes were not merged into '{current_branch}'.{Colors.RESET}")
 

@@ -115,7 +115,7 @@ def prompt_issue_number(current_branch: str, engine_desc: str) -> int:
         user_input = input(f"{Colors.YELLOW}Enter GitHub Issue Number to work on: {Colors.RESET}").strip()
     except (EOFError, KeyboardInterrupt):
         print(f"\n{Colors.YELLOW}[INFO] Operation cancelled by user.{Colors.RESET}")
-        sys.exit(0)
+        raise KeyboardInterrupt("Operation cancelled by user.")
 
     try:
         issue_num = int(user_input)
@@ -124,4 +124,4 @@ def prompt_issue_number(current_branch: str, engine_desc: str) -> int:
         return issue_num
     except ValueError:
         print(f"{Colors.RED}[ERROR] Invalid issue number entered.{Colors.RESET}")
-        sys.exit(1)
+        raise ValueError("Invalid issue number entered.")

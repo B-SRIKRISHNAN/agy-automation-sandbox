@@ -92,6 +92,8 @@ def build_markdown_context(issue_data: Dict[str, Any]) -> str:
 def fetch_and_confirm_issue(
     issue_number: int,
     output_path: Optional[Path] = None,
+    auto_approve: bool = False,
+    interactive: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """Fetch issue, display preview, request confirmation, and optionally write output.
 
@@ -127,16 +129,17 @@ def fetch_and_confirm_issue(
         print(f"{Colors.GRAY}(No description provided){Colors.RESET}")
     print(f"{Colors.GRAY}---------------------------{Colors.RESET}\n")
 
-    # Prompt user confirmation
-    try:
-        resp = input(f"{Colors.YELLOW}Do you want to proceed with Issue #{issue_number}? (Y/n): {Colors.RESET}").strip()
-    except (EOFError, KeyboardInterrupt):
-        print(f"\n{Colors.YELLOW}[INFO] Operation cancelled by user.{Colors.RESET}")
-        return None
+    # Prompt user confirmation unless auto_approve
+    if interactive and not auto_approve:
+        try:
+            resp = input(f"{Colors.YELLOW}Do you want to proceed with Issue #{issue_number}? (Y/n): {Colors.RESET}").strip()
+        except (EOFError, KeyboardInterrupt):
+            print(f"\n{Colors.YELLOW}[INFO] Operation cancelled by user.{Colors.RESET}")
+            return None
 
-    if resp and resp.lower() not in ("y", "yes"):
-        print(f"{Colors.YELLOW}[INFO] Operation cancelled by user.{Colors.RESET}")
-        return None
+        if resp and resp.lower() not in ("y", "yes"):
+            print(f"{Colors.YELLOW}[INFO] Operation cancelled by user.{Colors.RESET}")
+            return None
 
     context_text = build_markdown_context(issue_data)
 
@@ -157,29 +160,33 @@ def fetch_and_confirm_issue(
     }
 
 
-def main():
+def main() -> int:
     """Standalone fetch-issue CLI entry point."""
+    if "-h" in sys.argv or "--help" in sys.argv:
+        print("Usage: python -m agy_automation.fetch_issue <issue_number> [output_path]")
+        return 0
+
     if len(sys.argv) < 2:
         print(f"{Colors.RED}[ERROR] Issue number parameter is required.{Colors.RESET}")
         print("Usage: python -m agy_automation.fetch_issue <issue_number> [output_path]")
-        sys.exit(1)
+        return 1
 
     try:
         issue_num = int(sys.argv[1])
     except ValueError:
         print(f"{Colors.RED}[ERROR] Invalid issue number.{Colors.RESET}")
-        sys.exit(1)
+        return 1
 
     out_file = Path(sys.argv[2]) if len(sys.argv) > 2 else None
     try:
         res = fetch_and_confirm_issue(issue_num, output_path=out_file)
         if res is None:
-            sys.exit(2)
-        sys.exit(0)
+            return 2
+        return 0
     except Exception as exc:
         print(f"{Colors.RED}[ERROR] {exc}{Colors.RESET}")
-        sys.exit(1)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
