@@ -5,8 +5,17 @@ WORKTREE_NAME="${1:-agent-worktree1}"
 ISSUE_FILE="${2:-}"
 INSTRUCTIONS_FILE="${3:-}"
 
+INTERACTIVE_MODE=false
+for arg in "$@"; do
+    if [ "$arg" = "--interactive" ] || [ "$arg" = "-i" ]; then
+        INTERACTIVE_MODE=true
+        break
+    fi
+done
+
 REPO_ROOT="/workspace"
 cd "$REPO_ROOT"
+
 
 echo "=========================================================="
 echo "   Container Agent Runner: $WORKTREE_NAME"
@@ -87,7 +96,56 @@ else
     echo "[INFO] No AGENT_INSTRUCTIONS.md found in repository root. Proceeding with standard instructions."
 fi
 
+# ==========================================================
+# INTERACTIVE MODE: Direct interactive Antigravity session
+# ==========================================================
+if [ "$INTERACTIVE_MODE" = true ]; then
+    echo ""
+    echo "=========================================================="
+    echo "   Interactive Antigravity Sandbox: $WORKTREE_NAME"
+    echo "   Mode: Permissionless Autonomous Execution (Safe Sandbox)"
+    echo "=========================================================="
+    echo "Working directory : $(pwd)"
+    echo "Current Git branch: $(git branch --show-current)"
+    echo "Safety Boundary   : Container sandbox (host OS & main branch protected)"
+    echo ""
+    echo "[INFO] Starting agy with --dangerously-skip-permissions..."
+    echo "[INFO] agy will run commands and edits without prompting for permissions."
+    echo "[INFO] You can ask questions, request code changes, run tests, and iterate."
+    echo "[INFO] When you are finished, type /exit or exit to return to host review & merge."
+    echo "=========================================================="
+    echo ""
+
+    if ! command -v agy >/dev/null 2>&1; then
+        echo "[ERROR] Antigravity CLI (agy) is not installed or not found in PATH inside the container."
+        exit 1
+    fi
+
+    AGY_EXIT_CODE=0
+    agy --dangerously-skip-permissions || AGY_EXIT_CODE=$?
+
+    echo ""
+    echo "=========================================================="
+    echo "   Interactive Sandbox Session Finished                   "
+    echo "=========================================================="
+
+    DIRTY_STATUS="$(git status --porcelain)"
+    if [ -n "$DIRTY_STATUS" ]; then
+        echo "[INFO] Detected uncommitted changes remaining in worktree. Staging and committing..."
+        git add -A
+        git commit -m "feat($WORKTREE_NAME): interactive session updates" -m "Committed remaining workspace changes from interactive sandbox session." || true
+    fi
+
+    echo ""
+    echo "[INFO] Commits on current worktree branch:"
+    git log -n 3 --oneline || true
+
+    echo "[SUCCESS] Interactive session concluded successfully in worktree."
+    exit 0
+fi
+
 # Formulate prompt for agy
+
 if [ -n "$INSTRUCTIONS_CONTENT" ]; then
     PROMPT="You are an autonomous AI software engineer working in a dedicated git worktree at $(pwd).
 Your mission is to resolve the following issue:

@@ -57,10 +57,29 @@ class TestCli(unittest.TestCase):
     def test_parse_cli_args_defaults(self):
         args = parse_cli_args([])
         self.assertEqual(args.issue, 0)
+        self.assertEqual(args.session, "")
         self.assertFalse(args.build)
         self.assertFalse(args.interactive)
         self.assertFalse(args.dry_run)
         self.assertEqual(args.engine, "auto")
+
+    def test_parse_cli_args_session_target(self):
+        args = parse_cli_args(["refactor-auth", "--build"])
+        self.assertEqual(args.issue, 0)
+        self.assertEqual(args.session, "refactor-auth")
+        self.assertTrue(args.build)
+
+    def test_parse_cli_args_session_flag(self):
+        args = parse_cli_args(["--session", "my-task", "--dry-run"])
+        self.assertEqual(args.issue, 0)
+        self.assertEqual(args.session, "my-task")
+        self.assertTrue(args.dry_run)
+
+    def test_parse_cli_args_hash_issue(self):
+        args = parse_cli_args(["#99"])
+        self.assertEqual(args.issue, 99)
+        self.assertEqual(args.session, "")
+
 
 
 if __name__ == "__main__":

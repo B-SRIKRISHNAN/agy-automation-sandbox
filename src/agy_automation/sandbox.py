@@ -162,9 +162,12 @@ def run_sandbox(
             subprocess.run([engine_bin, "rm", "-f", container_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     # Automated Mode vs Interactive Mode
-    if worktree_name and not interactive:
+    if worktree_name:
         worktree_container_path = f"/workspace/.worktrees/{worktree_name}"
-        print(f"\n{Colors.CYAN}[INFO] Starting automated agent scoped to: {worktree_container_path}{Colors.RESET}")
+        if interactive:
+            print(f"\n{Colors.CYAN}[INFO] Launching interactive permissionless sandbox session in: {worktree_container_path}{Colors.RESET}")
+        else:
+            print(f"\n{Colors.CYAN}[INFO] Starting automated agent scoped to: {worktree_container_path}{Colors.RESET}")
 
         issue_arg = issue_file.replace("\\", "/") if issue_file else f".worktrees/{worktree_name}/ISSUE_CONTEXT.md"
 
@@ -186,6 +189,8 @@ def run_sandbox(
         ]
         if resolved_instr:
             runner_args.append(resolved_instr.replace("\\", "/"))
+        if interactive:
+            runner_args.append("--interactive")
 
         run_cmd = build_compose_invocation(runner_args)
         run_res = subprocess.run(run_cmd, env=env)
@@ -200,7 +205,7 @@ def run_sandbox(
             print(f"{Colors.RED}[ERROR] Agent container exited with error code {exit_code}.{Colors.RESET}")
             return exit_code
 
-        print(f"{Colors.GREEN}[OK] Sandbox container run finished successfully.{Colors.RESET}")
+        print(f"{Colors.GREEN}[OK] Sandbox container session finished successfully.{Colors.RESET}")
         return 0
     else:
         print(f"\n{Colors.GRAY}----------------------------------------------------------{Colors.RESET}")
@@ -215,6 +220,7 @@ def run_sandbox(
         run_cmd = build_compose_invocation(["run", "--rm", "sandbox", "bash"])
         run_res = subprocess.run(run_cmd, env=env)
         return run_res.returncode
+
 
 
 def main() -> int:

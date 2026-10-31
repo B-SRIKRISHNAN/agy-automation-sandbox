@@ -34,7 +34,8 @@
 
 param (
     [Parameter(Position = 0)]
-    [int]$IssueNumber = 0,
+    [string]$Target = "",
+    [string]$SessionName = "",
     [ValidateSet("auto", "podman", "docker")]
     [string]$ContainerEngine = "auto",
     [switch]$BuildSandbox,
@@ -142,22 +143,55 @@ if (-not $CurrentBranch) {
     exit 1
 }
 
-# 1. Prompt for Issue Number if not provided
-if ($IssueNumber -le 0) {
+# Target resolution (Session vs Issue)
+$IssueNumber = 0
+$IsSession = $false
+$SessionSlug = ""
+
+if ($SessionName) {
+    $IsSession = $true
+    $SessionSlug = ($SessionName.ToLower() -replace '[^a-z0-9_.-]', '-').Trim('-')
+} elseif ($Target) {
+    $cleanedTarget = $Target.Trim().TrimStart('#')
+    $parsedNum = 0
+    if ([int]::TryParse($cleanedTarget, [ref]$parsedNum) -and $parsedNum -gt 0) {
+        $IssueNumber = $parsedNum
+    } else {
+        $IsSession = $true
+        $SessionSlug = ($Target.ToLower() -replace '[^a-z0-9_.-]', '-').Trim('-')
+    }
+} else {
     Write-Host "==========================================================" -ForegroundColor Cyan
-    Write-Host "   Antigravity GitHub Issue Automation Coordinator        " -ForegroundColor Green
+    Write-Host "   Antigravity Autonomous Sandbox Coordinator            " -ForegroundColor Green
     Write-Host "==========================================================" -ForegroundColor Cyan
     Write-Host "Base Branch: $CurrentBranch" -ForegroundColor Gray
-    Write-Host "`nEnter GitHub Issue Number to work on: " -NoNewline -ForegroundColor Yellow
-    $inputNum = Read-Host
-    if (-not [int]::TryParse($inputNum, [ref]$IssueNumber) -or $IssueNumber -le 0) {
-        Write-Host "[ERROR] Invalid issue number entered." -ForegroundColor Red
+    Write-Host "`nEnter Session Name or GitHub Issue # (e.g. 'refactor-auth' or '42'): " -NoNewline -ForegroundColor Yellow
+    $userInput = (Read-Host).Trim()
+    if (-not $userInput) {
+        Write-Host "[ERROR] No session name or issue number entered." -ForegroundColor Red
         exit 1
+    }
+    $cleanedInput = $userInput.TrimStart('#')
+    $parsedNum = 0
+    if ([int]::TryParse($cleanedInput, [ref]$parsedNum) -and $parsedNum -gt 0) {
+        $IssueNumber = $parsedNum
+    } else {
+        $IsSession = $true
+        $SessionSlug = ($userInput.ToLower() -replace '[^a-z0-9_.-]', '-').Trim('-')
     }
 }
 
-$WorktreeName = "worktree-issue-$IssueNumber"
-$BranchName = "issue-$IssueNumber"
+if ($IsSession) {
+    if (-not $SessionSlug) { $SessionSlug = "session" }
+    $WorktreeName = "worktree-$SessionSlug"
+    $BranchName = "session/$SessionSlug"
+    $InteractiveMode = $true
+} else {
+    $WorktreeName = "worktree-issue-$IssueNumber"
+    $BranchName = "issue-$IssueNumber"
+    $InteractiveMode = [bool]$InteractiveSandbox
+}
+
 $WorktreesContainer = Join-Path $TargetRepo ".worktrees"
 $WorktreePath = Join-Path $WorktreesContainer $WorktreeName
 
@@ -167,33 +201,49 @@ $agentInstructionsCandidate = Get-ChildItem -Path $TargetRepo -Depth 0 -File -Er
 } | Select-Object -First 1
 $agentInstructionsName = if ($agentInstructionsCandidate) { $agentInstructionsCandidate.Name } else { "" }
 
-Write-Host "`n[START] Starting issue lifecycle for Issue #$IssueNumber..." -ForegroundColor Cyan
+if ($IsSession) {
+    Write-Host "`n[START] Starting permissionless sandbox session '$SessionSlug'..." -ForegroundColor Cyan
+} else {
+    Write-Host "`n[START] Starting issue lifecycle for Issue #$IssueNumber..." -ForegroundColor Cyan
+}
 Write-Host "Target Project: $TargetRepo" -ForegroundColor Gray
 Write-Host "Base Branch   : $CurrentBranch" -ForegroundColor Gray
 Write-Host "Worktree Name : $WorktreeName" -ForegroundColor Gray
 Write-Host "Branch Name   : $BranchName" -ForegroundColor Gray
 Write-Host "Agent Instr.  : $(if ($agentInstructionsName) { $agentInstructionsName } else { 'None (standard workflow)' })" -ForegroundColor Gray
+Write-Host "Sandbox Mode  : $(if ($InteractiveMode) { 'Interactive Antigravity (permissionless)' } else { 'Automated Antigravity agent runner' })" -ForegroundColor Gray
 
 # ==========================================================
-# STEP 1: Fetch issue details & confirm with user
+# STEP 1: Fetch issue details or initialize session context
 # ==========================================================
-Write-Host "`n>>> [STEP 1/5] Fetching issue details from GitHub..." -ForegroundColor Cyan
-$fetchScript = Join-Path $ScriptsDir "fetch-issue.ps1"
-$issueData = & $fetchScript -IssueNumber $IssueNumber
-if ($LASTEXITCODE -ne 0 -or -not $issueData) {
-    Write-Host "[INFO] Process aborted or issue fetch failed." -ForegroundColor Yellow
-    exit 0
+if ($IsSession) {
+    Write-Host "`n>>> [STEP 1/5] Initializing local session context..." -ForegroundColor Cyan
+    $sessionContext = "# Session: $SessionSlug`n- **Base Branch**: $CurrentBranch`n- **Branch**: $BranchName`n- **Mode**: Interactive Permissionless Sandbox`n`n## Session Overview`nAutonomous interactive development session scoped to worktree `$WorktreeName`.`n"
+    $issueData = [PSCustomObject]@{
+        Number = $SessionSlug
+        Context = $sessionContext
+    }
+    Write-Host "[OK] Local session '$SessionSlug' initialized (bypassing GitHub issues)." -ForegroundColor Green
+} else {
+    Write-Host "`n>>> [STEP 1/5] Fetching issue details from GitHub..." -ForegroundColor Cyan
+    $fetchScript = Join-Path $ScriptsDir "fetch-issue.ps1"
+    $issueData = & $fetchScript -IssueNumber $IssueNumber
+    if ($LASTEXITCODE -ne 0 -or -not $issueData) {
+        Write-Host "[INFO] Process aborted or issue fetch failed." -ForegroundColor Yellow
+        exit 0
+    }
 }
 
 # Dry Run intercept
 if ($DryRun) {
-    Write-Host "`n[DRY RUN] Issue #$IssueNumber fetched successfully. Planned execution:" -ForegroundColor Magenta
+    $targetDesc = if ($IsSession) { "Session '$SessionSlug'" } else { "Issue #$IssueNumber" }
+    Write-Host "`n[DRY RUN] $targetDesc configured successfully. Planned execution:" -ForegroundColor Magenta
     Write-Host "  - Target Repo     : $TargetRepo"
     Write-Host "  - Base Branch     : $CurrentBranch"
     Write-Host "  - Worktree Branch : $BranchName"
     Write-Host "  - Worktree Path   : $WorktreePath"
     Write-Host "  - Container Engine: $(if ($env:CONTAINER_ENGINE) { $env:CONTAINER_ENGINE } else { 'auto-detect (podman/docker)' })"
-    Write-Host "  - Sandbox Mode    : $(if ($InteractiveSandbox) { 'Interactive bash shell' } else { 'Automated Antigravity agent runner' })"
+    Write-Host "  - Sandbox Mode    : $(if ($InteractiveMode) { 'Interactive permissionless Antigravity session' } else { 'Automated Antigravity agent runner' })"
     Write-Host "  - Build Sandbox   : $BuildSandbox"
     Write-Host "[DRY RUN] Simulation complete. No worktree created, no container started, no commits made." -ForegroundColor Magenta
     exit 0
@@ -235,7 +285,7 @@ if ($agentInstructionsName) {
     $sandboxParams["InstructionsFile"] = $agentInstructionsName
 }
 if ($BuildSandbox) { $sandboxParams["Build"] = [switch]$true }
-if ($InteractiveSandbox) { $sandboxParams["Interactive"] = [switch]$true }
+if ($InteractiveMode) { $sandboxParams["Interactive"] = [switch]$true }
 
 & $sandboxScript @sandboxParams
 if ($LASTEXITCODE -ne 0) {
@@ -274,5 +324,5 @@ if ($merged -eq $true) {
 }
 
 Write-Host "`n==========================================================" -ForegroundColor Cyan
-Write-Host "   Issue #$IssueNumber Workflow Completed!               " -ForegroundColor Green
+Write-Host "   $(if ($IsSession) { "Session '$SessionSlug'" } else { "Issue #$IssueNumber" }) Workflow Completed!               " -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Cyan

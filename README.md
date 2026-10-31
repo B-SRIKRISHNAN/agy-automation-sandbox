@@ -118,24 +118,34 @@ chmod +x /path/to/agy-automation/scripts/*.sh
 
 ## Usage Guide & CLI Options
 
-Navigate to **any** target Git repository on your machine and run `start-issue`:
+Navigate to **any** target Git repository on your machine and run `start-issue` (or `start-session`):
 
 ```bash
-# Universal Python runner (cross-platform, recommended):
+# 1. Custom Session Mode (No GitHub Issues, interactive & permissionless):
+python3 /path/to/agy-automation/start_issue.py refactor-auth
+# Or via bin:
+start-session refactor-auth
+
+# 2. GitHub Issue Mode (Automated):
 python3 /path/to/agy-automation/start_issue.py 42
-# Or via PATH (bin/start-issue.py):
-start-issue.py 42
+start-issue 42
 
-# Legacy platform scripts:
-start-issue 42         # Linux/macOS
-start-issue.ps1 42     # Windows PowerShell
-
-# Interactive prompt (prompts for issue number)
+# 3. Interactive prompt (prompts for Session Name or Issue #):
 python3 start_issue.py
 start-issue
+start-session
 ```
 
+### Permissionless Interactive Sandbox Sessions
+
+When working on tasks outside of GitHub issues, you can launch a safe, permissionless interactive session:
+- **No Confirmation Prompts**: `agy` runs with `--dangerously-skip-permissions` inside the container. It can read files, write code, run compilers, and execute test suites without prompting you for permission every single time.
+- **Isolated & Safe**: Confined to Docker/Podman container resources (CPU/RAM caps, tmpfs) and an isolated Git worktree (`.worktrees/worktree-<session>`). Your primary branch and host OS remain protected.
+- **Human-in-the-Loop Collaboration**: Chat with the agent, ask for explanations, request code changes, run tests, and iterate until satisfied.
+- **Automatic Review & Merge**: Once you exit `agy` (`/exit` or Ctrl+D), remaining changes are auto-committed, and the host pipeline triggers the AI code review, diff inspection, and merge confirmation into your base branch.
+
 ### CLI Flags & Arguments
+
 
 The universal Python runner, PowerShell (`start-issue.ps1`), and Bash (`start-issue.sh`) support identical configuration options:
 

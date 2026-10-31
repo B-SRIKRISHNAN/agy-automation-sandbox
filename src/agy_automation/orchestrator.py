@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from .cli import parse_cli_args, prompt_issue_number
+from .cli import parse_cli_args, prompt_issue_number, prompt_session_or_issue
 from .config import (
     Colors,
     ensure_repo_exclude,
@@ -15,7 +15,7 @@ from .config import (
 )
 from .engine import detect_container_engine, verify_agy_installed
 from .fetch_issue import fetch_and_confirm_issue
-from .git_utils import get_current_branch
+from .git_utils import get_current_branch, sanitize_session_name
 from .push import push_changes
 from .review_merge import review_and_merge
 from .sandbox import run_sandbox
@@ -24,6 +24,7 @@ from .worktree import create_worktree, inject_issue_context
 
 def run_pipeline(
     issue_number: int = 0,
+    session_name: str = "",
     build: bool = False,
     interactive: bool = False,
     dry_run: bool = False,
@@ -31,7 +32,7 @@ def run_pipeline(
     auto_approve: bool = False,
     target_repo: Optional[Path] = None,
 ) -> int:
-    """Execute the end-to-end autonomous issue-resolution lifecycle."""
+    """Execute the end-to-end autonomous issue-resolution or session lifecycle."""
     toolkit_root = get_toolkit_root()
 
     # 1. Determine Target Project Repository
@@ -68,56 +69,90 @@ def run_pipeline(
     if engine != "auto":
         os.environ["CONTAINER_ENGINE"] = engine
 
-    # Prompt for Issue Number if not provided
-    if issue_number <= 0:
+    # Determine Target Mode (Session vs Issue)
+    target_mode = "issue" if issue_number > 0 else ("session" if session_name else "")
+    if not target_mode:
         try:
-            issue_number = prompt_issue_number(current_branch, engine_desc)
+            target_mode, target_val = prompt_session_or_issue(current_branch, engine_desc)
+            if target_mode == "issue":
+                issue_number = int(target_val)
+            else:
+                session_name = str(target_val)
         except Exception:
             return 1
 
-    worktree_name = f"worktree-issue-{issue_number}"
-    branch_name = f"issue-{issue_number}"
+    is_session = (target_mode == "session")
+    if is_session:
+        session_slug = sanitize_session_name(session_name)
+        worktree_name = f"worktree-{session_slug}"
+        branch_name = f"session/{session_slug}"
+        interactive_sandbox = True  # Permissionless interactive sandbox by default for sessions
+    else:
+        session_slug = ""
+        worktree_name = f"worktree-issue-{issue_number}"
+        branch_name = f"issue-{issue_number}"
+        interactive_sandbox = interactive
+
     worktree_path = target_repo / ".worktrees" / worktree_name
 
     # Check for repository agent instructions
     _, instr_name = find_agent_instructions(target_repo)
 
-    print(f"\n{Colors.CYAN}[START] Starting issue lifecycle for Issue #{issue_number}...{Colors.RESET}")
+    if is_session:
+        print(f"\n{Colors.CYAN}[START] Starting permissionless sandbox session '{session_slug}'...{Colors.RESET}")
+    else:
+        print(f"\n{Colors.CYAN}[START] Starting issue lifecycle for Issue #{issue_number}...{Colors.RESET}")
     print(f"{Colors.GRAY}Target Project   : {target_repo}{Colors.RESET}")
     print(f"{Colors.GRAY}Base Branch      : {current_branch}{Colors.RESET}")
     print(f"{Colors.GRAY}Worktree Name    : {worktree_name}{Colors.RESET}")
     print(f"{Colors.GRAY}Branch Name      : {branch_name}{Colors.RESET}")
     print(f"{Colors.GRAY}Agent Instr.     : {instr_name if instr_name else 'None (standard workflow)'}{Colors.RESET}")
     print(f"{Colors.GRAY}Container Engine : {engine_desc}{Colors.RESET}")
+    print(f"{Colors.GRAY}Sandbox Mode     : {'Interactive Antigravity (permissionless)' if interactive_sandbox else 'Automated Antigravity agent runner'}{Colors.RESET}")
 
     # ==========================================================
-    # STEP 1: Fetch issue details & confirm with user
+    # STEP 1: Fetch issue details or initialize session context
     # ==========================================================
-    print(f"\n{Colors.CYAN}>>> [STEP 1/5] Fetching issue details from GitHub...{Colors.RESET}")
-    try:
-        issue_data = fetch_and_confirm_issue(
-            issue_number,
-            auto_approve=auto_approve,
-            interactive=not auto_approve,
-        )
-    except Exception as exc:
-        print(f"{Colors.RED}[ERROR] {exc}{Colors.RESET}")
-        return 1
+    if is_session:
+        print(f"\n{Colors.CYAN}>>> [STEP 1/5] Initializing local session context...{Colors.RESET}")
+        session_context = f"""# Session: {session_slug}
+- **Base Branch**: {current_branch}
+- **Branch**: {branch_name}
+- **Mode**: Interactive Permissionless Sandbox
 
-    if not issue_data:
-        print(f"{Colors.YELLOW}[INFO] Process aborted or issue fetch failed.{Colors.RESET}")
-        return 0
+## Session Overview
+Autonomous interactive development session scoped to worktree `{worktree_name}`.
+Execute tasks, queries, code modifications, and tests inside this protected container sandbox.
+"""
+        issue_data = {"number": session_slug, "context": session_context}
+        print(f"{Colors.GREEN}[OK] Local session '{session_slug}' initialized (bypassing GitHub issues).{Colors.RESET}")
+    else:
+        print(f"\n{Colors.CYAN}>>> [STEP 1/5] Fetching issue details from GitHub...{Colors.RESET}")
+        try:
+            issue_data = fetch_and_confirm_issue(
+                issue_number,
+                auto_approve=auto_approve,
+                interactive=not auto_approve,
+            )
+        except Exception as exc:
+            print(f"{Colors.RED}[ERROR] {exc}{Colors.RESET}")
+            return 1
+
+        if not issue_data:
+            print(f"{Colors.YELLOW}[INFO] Process aborted or issue fetch failed.{Colors.RESET}")
+            return 0
 
     # Dry-Run Simulation Intercept
     if dry_run:
-        print(f"\n{Colors.MAGENTA}[DRY RUN] Issue #{issue_number} fetched successfully. Planned execution:{Colors.RESET}")
+        target_desc = f"Session '{session_slug}'" if is_session else f"Issue #{issue_number}"
+        print(f"\n{Colors.MAGENTA}[DRY RUN] {target_desc} configured successfully. Planned execution:{Colors.RESET}")
         print(f"{Colors.WHITE}  - Target Repo     : {target_repo}{Colors.RESET}")
         print(f"{Colors.WHITE}  - Base Branch     : {current_branch}{Colors.RESET}")
         print(f"{Colors.WHITE}  - Worktree Branch : {branch_name}{Colors.RESET}")
         print(f"{Colors.WHITE}  - Worktree Path   : {worktree_path}{Colors.RESET}")
         print(f"{Colors.WHITE}  - Agent Instr.    : {instr_name if instr_name else 'None (standard agent workflow)'}{Colors.RESET}")
         print(f"{Colors.WHITE}  - Container Engine: {engine if engine != 'auto' else f'auto-detect ({engine_desc})'}{Colors.RESET}")
-        print(f"{Colors.WHITE}  - Sandbox Mode    : {'Interactive bash shell' if interactive else 'Automated Antigravity agent runner'}{Colors.RESET}")
+        print(f"{Colors.WHITE}  - Sandbox Mode    : {'Interactive permissionless Antigravity session' if interactive_sandbox else 'Automated Antigravity agent runner'}{Colors.RESET}")
         print(f"{Colors.WHITE}  - Build Sandbox   : {build}{Colors.RESET}")
         print(f"{Colors.MAGENTA}[DRY RUN] Simulation complete. No worktree created, no container started, no commits made.{Colors.RESET}")
         return 0
@@ -139,14 +174,14 @@ def run_pipeline(
         print(f"{Colors.RED}[ERROR] Failed to create git worktree: {exc}{Colors.RESET}")
         return 1
 
-    # Inject issue context
+    # Inject issue or session context
     context_dest = inject_issue_context(worktree_path, issue_data["context"])
-    print(f"{Colors.GREEN}[OK] Injected issue context into worktree: {context_dest}{Colors.RESET}")
+    print(f"{Colors.GREEN}[OK] Injected context into worktree: {context_dest}{Colors.RESET}")
     if instr_name:
         print(f"{Colors.GREEN}[OK] Active repository agent instructions: {instr_name}{Colors.RESET}")
 
     # ==========================================================
-    # STEP 3: Run Sandbox with automated agy
+    # STEP 3: Run Sandbox with agy
     # ==========================================================
     print(f"\n{Colors.CYAN}>>> [STEP 3/5] Launching Sandbox & running Antigravity (agy)...{Colors.RESET}")
     issue_rel_path = f".worktrees/{worktree_name}/ISSUE_CONTEXT.md"
@@ -156,7 +191,7 @@ def run_pipeline(
         target_repo=target_repo,
         instructions_file=instr_name,
         build=build,
-        interactive=interactive,
+        interactive=interactive_sandbox,
         container_engine=engine,
     )
     if sandbox_exit != 0:
@@ -197,7 +232,8 @@ def run_pipeline(
         print(f"\n{Colors.YELLOW}[INFO] Skipping push since changes were not merged into '{current_branch}'.{Colors.RESET}")
 
     print(f"\n{Colors.CYAN}=========================================================={Colors.RESET}")
-    print(f"{Colors.GREEN}   Issue #{issue_number} Workflow Completed!               {Colors.RESET}")
+    target_msg = f"Session '{session_slug}'" if is_session else f"Issue #{issue_number}"
+    print(f"{Colors.GREEN}   {target_msg} Workflow Completed!               {Colors.RESET}")
     print(f"{Colors.CYAN}=========================================================={Colors.RESET}")
     return 0
 
@@ -207,11 +243,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parse_cli_args(argv)
     return run_pipeline(
         issue_number=args.issue,
+        session_name=getattr(args, "session", ""),
         build=args.build,
         interactive=args.interactive,
         dry_run=args.dry_run,
         engine=args.engine,
     )
+
 
 
 if __name__ == "__main__":

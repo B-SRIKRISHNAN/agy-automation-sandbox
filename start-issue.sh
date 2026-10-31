@@ -2,6 +2,7 @@
 set -eo pipefail
 
 ISSUE_NUMBER=""
+SESSION_NAME=""
 BUILD_FLAG=false
 INTERACTIVE_FLAG=false
 DRY_RUN_FLAG=false
@@ -30,14 +31,29 @@ while [[ $# -gt 0 ]]; do
             CONTAINER_ENGINE="${1#*=}"
             shift
             ;;
+        --session=*|-Session=*)
+            SESSION_NAME="${1#*=}"
+            shift
+            ;;
+        --session|-Session|-s)
+            SESSION_NAME="$2"
+            shift 2
+            ;;
         *)
-            if [ -z "$ISSUE_NUMBER" ] && [[ "$1" =~ ^[0-9]+$ ]]; then
-                ISSUE_NUMBER="$1"
+            if [ -z "$ISSUE_NUMBER" ] && [ -z "$SESSION_NAME" ]; then
+                if [[ "$1" =~ ^[0-9]+$ ]]; then
+                    ISSUE_NUMBER="$1"
+                elif [[ "$1" =~ ^#[0-9]+$ ]]; then
+                    ISSUE_NUMBER="${1#\#}"
+                else
+                    SESSION_NAME="$1"
+                fi
             fi
             shift
             ;;
     esac
 done
+
 
 if [ "$CONTAINER_ENGINE" != "auto" ]; then
     export CONTAINER_ENGINE
@@ -128,23 +144,43 @@ for script in "${REQUIRED_SCRIPTS[@]}"; do
     chmod +x "$script_path"
 done
 
-# Prompt for Issue Number if not provided
-if [ -z "$ISSUE_NUMBER" ] || ! [[ "$ISSUE_NUMBER" =~ ^[0-9]+$ ]]; then
+# Prompt for Session Name or Issue Number if not provided
+if [ -z "$ISSUE_NUMBER" ] && [ -z "$SESSION_NAME" ]; then
     echo "=========================================================="
-    echo "   Antigravity GitHub Issue Automation Coordinator        "
+    echo "   Antigravity Autonomous Sandbox Coordinator            "
     echo "=========================================================="
     echo "Base Branch      : $CURRENT_BRANCH"
     echo "Container Engine : $ENGINE"
     echo ""
-    read -r -p "Enter GitHub Issue Number to work on: " ISSUE_NUMBER
-    if [ -z "$ISSUE_NUMBER" ] || ! [[ "$ISSUE_NUMBER" =~ ^[0-9]+$ ]] || [ "$ISSUE_NUMBER" -le 0 ]; then
-        echo "[ERROR] Invalid issue number entered."
+    read -r -p "Enter Session Name or GitHub Issue # (e.g. 'refactor-auth' or '42'): " TARGET_INPUT
+    TARGET_INPUT="$(echo "$TARGET_INPUT" | xargs)"
+    if [ -z "$TARGET_INPUT" ]; then
+        echo "[ERROR] No session name or issue number entered."
         exit 1
+    fi
+    CLEANED_TARGET="${TARGET_INPUT#\#}"
+    if [[ "$CLEANED_TARGET" =~ ^[0-9]+$ ]] && [ "$CLEANED_TARGET" -gt 0 ]; then
+        ISSUE_NUMBER="$CLEANED_TARGET"
+    else
+        SESSION_NAME="$TARGET_INPUT"
     fi
 fi
 
-WORKTREE_NAME="worktree-issue-$ISSUE_NUMBER"
-BRANCH_NAME="issue-$ISSUE_NUMBER"
+if [ -n "$SESSION_NAME" ]; then
+    IS_SESSION=true
+    SESSION_SLUG="$(echo "$SESSION_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_.-]/-/g' | sed 's/^-*//;s/-*$//')"
+    [ -z "$SESSION_SLUG" ] && SESSION_SLUG="session"
+    WORKTREE_NAME="worktree-$SESSION_SLUG"
+    BRANCH_NAME="session/$SESSION_SLUG"
+    INTERACTIVE_SANDBOX=true
+else
+    IS_SESSION=false
+    SESSION_SLUG=""
+    WORKTREE_NAME="worktree-issue-$ISSUE_NUMBER"
+    BRANCH_NAME="issue-$ISSUE_NUMBER"
+    INTERACTIVE_SANDBOX="$INTERACTIVE_FLAG"
+fi
+
 WORKTREE_PATH="$TARGET_REPO/.worktrees/$WORKTREE_NAME"
 
 # Check for repository agent instructions (AGENT_INSTRUCTIONS.md, case-insensitive)
@@ -166,37 +202,59 @@ if [ -z "$AGENT_INSTRUCTIONS_FILE" ]; then
 fi
 
 echo ""
-echo "[START] Starting issue lifecycle for Issue #$ISSUE_NUMBER..."
+if [ "$IS_SESSION" = true ]; then
+    echo "[START] Starting permissionless sandbox session '$SESSION_SLUG'..."
+else
+    echo "[START] Starting issue lifecycle for Issue #$ISSUE_NUMBER..."
+fi
 echo "Target Project   : $TARGET_REPO"
 echo "Base Branch      : $CURRENT_BRANCH"
 echo "Worktree Name    : $WORKTREE_NAME"
 echo "Branch Name      : $BRANCH_NAME"
 echo "Agent Instr.     : ${AGENT_INSTRUCTIONS_NAME:-None (standard workflow)}"
 echo "Container Engine : $ENGINE"
+echo "Sandbox Mode     : $(if [ "$INTERACTIVE_SANDBOX" = true ]; then echo 'Interactive Antigravity (permissionless)'; else echo 'Automated Antigravity agent runner'; fi)"
 
 # ==========================================================
-# STEP 1: Fetch issue details & confirm with user
+# STEP 1: Fetch issue details or initialize session context
 # ==========================================================
 echo ""
-echo ">>> [STEP 1/5] Fetching issue details from GitHub..."
-TMP_CONTEXT_FILE="/tmp/issue_${ISSUE_NUMBER}_context.md"
-if ! bash "$SCRIPTS_DIR/fetch-issue.sh" "$ISSUE_NUMBER" "$TMP_CONTEXT_FILE"; then
-    echo "[INFO] Process aborted or issue fetch failed."
-    rm -f "$TMP_CONTEXT_FILE"
-    exit 0
+if [ "$IS_SESSION" = true ]; then
+    echo ">>> [STEP 1/5] Initializing local session context..."
+    TMP_CONTEXT_FILE="/tmp/session_${SESSION_SLUG}_context.md"
+    cat <<EOF > "$TMP_CONTEXT_FILE"
+# Session: $SESSION_SLUG
+- **Base Branch**: $CURRENT_BRANCH
+- **Branch**: $BRANCH_NAME
+- **Mode**: Interactive Permissionless Sandbox
+
+## Session Overview
+Autonomous interactive development session scoped to worktree \`$WORKTREE_NAME\`.
+Execute tasks, queries, code modifications, and tests inside this protected container sandbox.
+EOF
+    echo "[OK] Local session '$SESSION_SLUG' initialized (bypassing GitHub issues)."
+else
+    echo ">>> [STEP 1/5] Fetching issue details from GitHub..."
+    TMP_CONTEXT_FILE="/tmp/issue_${ISSUE_NUMBER}_context.md"
+    if ! bash "$SCRIPTS_DIR/fetch-issue.sh" "$ISSUE_NUMBER" "$TMP_CONTEXT_FILE"; then
+        echo "[INFO] Process aborted or issue fetch failed."
+        rm -f "$TMP_CONTEXT_FILE"
+        exit 0
+    fi
 fi
 
 # Dry Run intercept
 if [ "$DRY_RUN_FLAG" = true ]; then
     echo ""
-    echo "[DRY RUN] Issue #$ISSUE_NUMBER fetched successfully. Planned execution:"
+    TARGET_LABEL="$(if [ "$IS_SESSION" = true ]; then echo "Session '$SESSION_SLUG'"; else echo "Issue #$ISSUE_NUMBER"; fi)"
+    echo "[DRY RUN] $TARGET_LABEL configured successfully. Planned execution:"
     echo "  - Target Repo     : $TARGET_REPO"
     echo "  - Base Branch     : $CURRENT_BRANCH"
     echo "  - Worktree Branch : $BRANCH_NAME"
     echo "  - Worktree Path   : $WORKTREE_PATH"
     echo "  - Agent Instr.    : ${AGENT_INSTRUCTIONS_NAME:-None (standard agent workflow)}"
     echo "  - Container Engine: ${CONTAINER_ENGINE:-auto-detect ($ENGINE)}"
-    echo "  - Sandbox Mode    : $(if [ "$INTERACTIVE_FLAG" = true ]; then echo 'Interactive bash shell'; else echo 'Automated Antigravity agent runner'; fi)"
+    echo "  - Sandbox Mode    : $(if [ "$INTERACTIVE_SANDBOX" = true ]; then echo 'Interactive permissionless Antigravity session'; else echo 'Automated Antigravity agent runner'; fi)"
     echo "  - Build Sandbox   : $BUILD_FLAG"
     echo "[DRY RUN] Simulation complete. No worktree created, no container started, no commits made."
     rm -f "$TMP_CONTEXT_FILE"
@@ -214,12 +272,12 @@ if ! bash "$SCRIPTS_DIR/create-worktree.sh" "$WORKTREE_NAME" "$BRANCH_NAME" "$CU
     exit 1
 fi
 
-# Inject issue context into worktree
+# Inject issue or session context into worktree
 ISSUE_CONTEXT_DEST="$WORKTREE_PATH/ISSUE_CONTEXT.md"
 if [ -f "$TMP_CONTEXT_FILE" ]; then
     cp "$TMP_CONTEXT_FILE" "$ISSUE_CONTEXT_DEST"
     rm -f "$TMP_CONTEXT_FILE"
-    echo "[OK] Injected issue context into worktree: $ISSUE_CONTEXT_DEST"
+    echo "[OK] Injected context into worktree: $ISSUE_CONTEXT_DEST"
 fi
 
 if [ -n "$AGENT_INSTRUCTIONS_NAME" ]; then
@@ -227,7 +285,7 @@ if [ -n "$AGENT_INSTRUCTIONS_NAME" ]; then
 fi
 
 # ==========================================================
-# STEP 3: Run Sandbox with automated agy
+# STEP 3: Run Sandbox with agy
 # ==========================================================
 echo ""
 echo ">>> [STEP 3/5] Launching Sandbox & running Antigravity (agy)..."
@@ -238,9 +296,10 @@ fi
 if [ "$BUILD_FLAG" = true ]; then
     SANDBOX_ARGS+=("-Build")
 fi
-if [ "$INTERACTIVE_FLAG" = true ]; then
+if [ "$INTERACTIVE_SANDBOX" = true ]; then
     SANDBOX_ARGS+=("-Interactive")
 fi
+
 
 if ! bash "$SCRIPTS_DIR/run-sandbox.sh" "${SANDBOX_ARGS[@]}"; then
     echo "[ERROR] Sandbox run failed."
@@ -276,5 +335,10 @@ fi
 
 echo ""
 echo "=========================================================="
-echo "   Issue #$ISSUE_NUMBER Workflow Completed!               "
+if [ "$IS_SESSION" = true ]; then
+    echo "   Session '$SESSION_SLUG' Workflow Completed!            "
+else
+    echo "   Issue #$ISSUE_NUMBER Workflow Completed!               "
+fi
 echo "=========================================================="
+

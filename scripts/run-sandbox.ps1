@@ -180,9 +180,13 @@ if ($existingContainer) {
 # 8. Run container in automated or interactive mode
 $ErrorActionPreference = "Continue"
 
-if ($WorktreeName -and -not $Interactive) {
+if ($WorktreeName) {
     $worktreeContainerPath = "/workspace/.worktrees/$WorktreeName"
-    Write-Host "`n[INFO] Starting automated agent scoped to: $worktreeContainerPath" -ForegroundColor Cyan
+    if ($Interactive) {
+        Write-Host "`n[INFO] Starting interactive permissionless sandbox session in: $worktreeContainerPath" -ForegroundColor Cyan
+    } else {
+        Write-Host "`n[INFO] Starting automated agent scoped to: $worktreeContainerPath" -ForegroundColor Cyan
+    }
     $issueArg = if ($IssueFile) { $IssueFile.Replace("\", "/") } else { "" }
     
     # Auto-detect instructions file if not explicitly supplied
@@ -199,6 +203,9 @@ if ($WorktreeName -and -not $Interactive) {
     if ($InstructionsFile) {
         $instructionsArg = $InstructionsFile.Replace("\", "/")
         $runnerArgs += "$instructionsArg"
+    }
+    if ($Interactive) {
+        $runnerArgs += "--interactive"
     }
 
     # Run container executing runner from mounted /runner/

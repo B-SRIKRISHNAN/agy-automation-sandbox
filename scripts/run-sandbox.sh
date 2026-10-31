@@ -194,10 +194,14 @@ if [ -n "$EXISTING_CONTAINER" ]; then
 fi
 
 # 8. Run container in automated or interactive mode
-if [ -n "$WORKTREE_NAME" ] && [ "$INTERACTIVE" = false ]; then
+if [ -n "$WORKTREE_NAME" ]; then
     WORKTREE_CONTAINER_PATH="/workspace/.worktrees/$WORKTREE_NAME"
     echo ""
-    echo "[INFO] Starting automated agent scoped to: $WORKTREE_CONTAINER_PATH"
+    if [ "$INTERACTIVE" = true ]; then
+        echo "[INFO] Starting interactive permissionless sandbox session in: $WORKTREE_CONTAINER_PATH"
+    else
+        echo "[INFO] Starting automated agent scoped to: $WORKTREE_CONTAINER_PATH"
+    fi
     issue_arg="${ISSUE_FILE//\\//}"
 
     # Auto-detect instructions file if not explicitly supplied
@@ -220,6 +224,9 @@ if [ -n "$WORKTREE_NAME" ] && [ "$INTERACTIVE" = false ]; then
     if [ -n "$INSTRUCTIONS_FILE" ]; then
         RUNNER_ARGS+=("${INSTRUCTIONS_FILE//\\//}")
     fi
+    if [ "$INTERACTIVE" = true ]; then
+        RUNNER_ARGS+=("--interactive")
+    fi
 
     # Run container executing runner from mounted /runner/
     run_compose run --rm -w "$WORKTREE_CONTAINER_PATH" sandbox bash /runner/container-agent-runner.sh "${RUNNER_ARGS[@]}"
@@ -237,6 +244,7 @@ if [ -n "$WORKTREE_NAME" ] && [ "$INTERACTIVE" = false ]; then
     fi
     echo "[OK] Sandbox container run finished successfully."
 else
+
     echo ""
     echo "----------------------------------------------------------"
     echo "Tips inside the container:"

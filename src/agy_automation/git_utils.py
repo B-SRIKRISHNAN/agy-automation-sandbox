@@ -132,3 +132,12 @@ def get_dirty_tracked_files(repo_dir: Path) -> List[str]:
         if line and not line.startswith("??"):
             dirty.append(line)
     return dirty
+
+
+def sanitize_session_name(raw_name: str) -> str:
+    """Sanitize arbitrary string into a valid, safe Git branch / Docker resource slug."""
+    import re
+
+    clean = re.sub(r"[^a-zA-Z0-9_\-\.]+", "-", raw_name.strip()).strip("-").lower()
+    return clean or "session"
+
