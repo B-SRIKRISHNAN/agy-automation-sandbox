@@ -80,6 +80,22 @@ class TestCli(unittest.TestCase):
         self.assertEqual(args.issue, 99)
         self.assertEqual(args.session, "")
 
+    def test_parse_cli_args_new_issue_flag(self):
+        args = parse_cli_args(["--new-issue"])
+        self.assertTrue(args.new_issue)
+        self.assertEqual(args.issue, 0)
+        self.assertEqual(args.session, "")
+
+    def test_parse_cli_args_new_issue_with_prompt(self):
+        args = parse_cli_args(["--new-issue", "-p", "Token overflow in tokenizer"])
+        self.assertTrue(args.new_issue)
+        self.assertEqual(args.prompt, "Token overflow in tokenizer")
+
+    def test_parse_cli_args_create_issue_command(self):
+        args = parse_cli_args(["create-issue", "--dry-run"])
+        self.assertTrue(args.new_issue)
+        self.assertTrue(args.dry_run)
+        self.assertEqual(args.issue, 0)
 
 
 if __name__ == "__main__":

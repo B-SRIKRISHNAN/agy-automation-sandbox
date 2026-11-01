@@ -316,6 +316,14 @@ Execute tasks, queries, code modifications, and tests inside this protected cont
 def main(argv: Optional[List[str]] = None) -> int:
     """Primary CLI entry point for the coordinator."""
     args = parse_cli_args(argv)
+    if getattr(args, "new_issue", False):
+        from .issue_workflow import run_issue_creation_workflow
+        return run_issue_creation_workflow(
+            initial_prompt=getattr(args, "prompt", ""),
+            dry_run=args.dry_run,
+            engine=args.engine,
+            interactive=True,
+        )
     return run_pipeline(
         issue_number=args.issue,
         session_name=getattr(args, "session", ""),

@@ -27,6 +27,13 @@ def normalize_args(raw_args: List[str]) -> List[str]:
         "-session": "--session",
         "-sessionname": "--session",
         "--sessionname": "--session",
+        "-newissue": "--new-issue",
+        "--newissue": "--new-issue",
+        "-new-issue": "--new-issue",
+        "-createissue": "--new-issue",
+        "--createissue": "--new-issue",
+        "-create-issue": "--new-issue",
+        "--create-issue": "--new-issue",
     }
 
     for arg in raw_args:
@@ -104,6 +111,20 @@ def create_parser() -> argparse.ArgumentParser:
         dest="engine",
         help="Specify container engine to use: 'auto', 'podman', or 'docker' (default: auto).",
     )
+    parser.add_argument(
+        "--new-issue",
+        "-N",
+        action="store_true",
+        dest="new_issue",
+        help="Interactively explore codebase, formulate an issue statement, and publish to GitHub.",
+    )
+    parser.add_argument(
+        "--prompt",
+        "-p",
+        default="",
+        dest="prompt",
+        help="Initial problem description or bug concept for issue formulation.",
+    )
 
     return parser
 
@@ -119,7 +140,16 @@ def parse_cli_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     raw_target = str(ns.target).strip()
     session_flag = str(ns.session).strip()
 
-    if session_flag:
+    if raw_target in ("new-issue", "create-issue"):
+        ns.new_issue = True
+        ns.session = ""
+        ns.issue = 0
+    elif getattr(ns, "new_issue", False):
+        if raw_target and not getattr(ns, "prompt", ""):
+            ns.prompt = raw_target
+        ns.session = ""
+        ns.issue = 0
+    elif session_flag:
         ns.session = session_flag
         ns.issue = 0
     elif raw_target.isdigit() or (raw_target.startswith("#") and raw_target[1:].isdigit()):
