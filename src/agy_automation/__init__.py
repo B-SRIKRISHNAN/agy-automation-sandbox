@@ -1,3 +1,162 @@
-"""agy-automation - Universal autonomous issue-resolution pipeline powered by Antigravity CLI (agy)."""
+"""agy-automation package: autonomous container sandboxing and agent orchestration."""
 
-__version__ = "1.0.0"
+from .core.cleanup import cleanup_worktree
+from .core.config import (
+    Colors,
+    ensure_repo_exclude,
+    find_agent_instructions,
+    get_target_repo,
+    get_toolkit_root,
+)
+from .core.configuration import DEFAULT_CONFIG, load_merged_config
+from .core.context import PipelineContext
+from .core.create_issue import (
+    confirm_and_create_issue,
+    create_github_issue,
+    extract_issue_number_from_url,
+)
+from .core.engine import (
+    derive_container_names,
+    detect_container_engine,
+    resolve_compose_cmd,
+    verify_agy_installed,
+)
+from .core.exceptions import (
+    AutomationError,
+    BranchNotFoundError,
+    ComposeExecutionError,
+    ConfigurationError,
+    ContainerEngineNotFoundError,
+    ContainerError,
+    DirtyWorkspaceError,
+    GitError,
+    GitHubCliNotFoundError,
+    GitHubError,
+    IssueCreationError,
+    IssueNotFoundError,
+    MergeConflictError,
+    SandboxExecutionError,
+    UserCancelledError,
+    WorktreeConflictError,
+)
+from .core.fetch_issue import (
+    build_markdown_context,
+    fetch_and_confirm_issue,
+    fetch_issue_payload,
+)
+from .core.generate_issue import (
+    generate_issue_statement,
+    parse_generated_issue,
+)
+from .core.git import (
+    abort_merge,
+    configure_relative_paths,
+    get_commits_between,
+    get_current_branch,
+    get_diff_raw,
+    get_diff_stat,
+    get_dirty_tracked_files,
+    get_unmerged_files,
+    get_workspace_status,
+    is_branch_existing,
+    is_merge_in_progress,
+    list_worktrees,
+    prune_worktrees,
+    run_git,
+    sanitize_session_name,
+    worktree_repair,
+)
+from .core.issue_workflow import run_issue_creation_workflow
+from .core.logging import (
+    RunSession,
+    configure_logging,
+    generate_run_id,
+    get_default_runs_dir,
+    get_logger,
+    sanitize_filename_component,
+)
+from .core.orchestrator import run_pipeline
+from .core.push import push_changes
+from .core.review_merge import format_merge_message, prepare_review_data, review_and_merge
+from .core.sandbox import (
+    ensure_gitconfig_sandbox,
+    format_stream_event_for_display,
+    get_gemini_credentials_path,
+    print_stream_line,
+    run_sandbox,
+)
+from .core.worktree import create_worktree, inject_issue_context
+
+__all__ = [
+    "AutomationError",
+    "BranchNotFoundError",
+    "Colors",
+    "ComposeExecutionError",
+    "ConfigurationError",
+    "ContainerEngineNotFoundError",
+    "ContainerError",
+    "DEFAULT_CONFIG",
+    "DirtyWorkspaceError",
+    "GitError",
+    "GitHubCliNotFoundError",
+    "GitHubError",
+    "IssueCreationError",
+    "IssueNotFoundError",
+    "MergeConflictError",
+    "PipelineContext",
+    "RunSession",
+    "SandboxExecutionError",
+    "UserCancelledError",
+    "WorktreeConflictError",
+    "abort_merge",
+    "build_markdown_context",
+    "cleanup_worktree",
+    "configure_logging",
+    "configure_relative_paths",
+    "confirm_and_create_issue",
+    "create_github_issue",
+    "create_worktree",
+    "derive_container_names",
+    "detect_container_engine",
+    "ensure_gitconfig_sandbox",
+    "ensure_repo_exclude",
+    "extract_issue_number_from_url",
+    "fetch_and_confirm_issue",
+    "fetch_issue_payload",
+    "find_agent_instructions",
+    "format_merge_message",
+    "format_stream_event_for_display",
+    "generate_issue_statement",
+    "generate_run_id",
+    "get_commits_between",
+    "get_current_branch",
+    "get_default_runs_dir",
+    "get_diff_raw",
+    "get_diff_stat",
+    "get_dirty_tracked_files",
+    "get_gemini_credentials_path",
+    "get_logger",
+    "get_target_repo",
+    "get_toolkit_root",
+    "get_unmerged_files",
+    "get_workspace_status",
+    "inject_issue_context",
+    "is_branch_existing",
+    "is_merge_in_progress",
+    "list_worktrees",
+    "load_merged_config",
+    "parse_generated_issue",
+    "print_stream_line",
+    "prune_worktrees",
+    "push_changes",
+    "resolve_compose_cmd",
+    "review_and_merge",
+    "run_git",
+    "run_issue_creation_workflow",
+    "run_pipeline",
+    "run_sandbox",
+    "sanitize_filename_component",
+    "sanitize_session_name",
+    "verify_agy_installed",
+    "worktree_repair",
+]

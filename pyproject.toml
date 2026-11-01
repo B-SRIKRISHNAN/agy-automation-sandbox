@@ -20,6 +20,7 @@ classifiers = [
 
 [project.scripts]
 start-issue = "agy_automation.orchestrator:main"
+agy-automation = "agy_automation.cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

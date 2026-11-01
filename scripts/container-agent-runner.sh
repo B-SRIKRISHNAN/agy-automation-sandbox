@@ -21,14 +21,19 @@ echo "=========================================================="
 echo "   Container Agent Runner: $WORKTREE_NAME"
 echo "=========================================================="
 
-# Repair worktree paths for Linux environment
-git worktree repair 2>/dev/null || true
-
 WORKTREE_DIR="/workspace/.worktrees/$WORKTREE_NAME"
 if [ ! -d "$WORKTREE_DIR" ]; then
     echo "[ERROR] Worktree directory not found at $WORKTREE_DIR"
     exit 1
 fi
+
+# Ensure worktree gitdir pointer uses a relative path for cross-environment container portability
+if [ -f "$WORKTREE_DIR/.git" ]; then
+    echo "gitdir: ../../.git/worktrees/$WORKTREE_NAME" > "$WORKTREE_DIR/.git"
+fi
+
+# Repair worktree paths for Linux environment
+git worktree repair 2>/dev/null || true
 
 cd "$WORKTREE_DIR"
 git worktree repair 2>/dev/null || true
