@@ -134,6 +134,50 @@ def get_dirty_tracked_files(repo_dir: Path) -> List[str]:
     return dirty
 
 
+def get_workspace_status(repo_dir: Path) -> Tuple[List[str], List[str]]:
+    """Get dirty tracked files and untracked files in the workspace.
+    
+    Returns:
+        (dirty_tracked, untracked) file lists from 'git status --porcelain'.
+    """
+    res = run_git(["status", "--porcelain"], cwd=repo_dir)
+    if res.returncode != 0 or not res.stdout:
+        return [], []
+    dirty_tracked = []
+    untracked = []
+    for line in res.stdout.splitlines():
+        line = line.rstrip()
+        if not line:
+            continue
+        if line.startswith("??"):
+            untracked.append(line[3:].strip())
+        else:
+            dirty_tracked.append(line)
+    return dirty_tracked, untracked
+
+
+def get_unmerged_files(repo_dir: Path) -> List[str]:
+    """Get list of files with active, unmerged merge conflicts."""
+    res = run_git(["diff", "--name-only", "--diff-filter=U"], cwd=repo_dir)
+    if res.returncode == 0 and res.stdout.strip():
+        return [line.strip() for line in res.stdout.splitlines() if line.strip()]
+    return []
+
+
+def is_merge_in_progress(repo_dir: Path) -> bool:
+    """Check if repository currently has an unresolved merge in progress."""
+    merge_head = repo_dir / ".git" / "MERGE_HEAD"
+    if merge_head.is_file():
+        return True
+    res = run_git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], cwd=repo_dir)
+    return res.returncode == 0
+
+
+def abort_merge(repo_dir: Path) -> None:
+    """Safely abort in-progress git merge if one exists."""
+    run_git(["merge", "--abort"], cwd=repo_dir)
+
+
 def sanitize_session_name(raw_name: str) -> str:
     """Sanitize arbitrary string into a valid, safe Git branch / Docker resource slug."""
     import re

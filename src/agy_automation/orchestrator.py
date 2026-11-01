@@ -270,6 +270,7 @@ Execute tasks, queries, code modifications, and tests inside this protected cont
                 auto_approve=auto_approve,
                 interactive=not auto_approve,
                 repo_dir=target_repo,
+                session_logger=session_logger,
             )
         except Exception as exc:
             session_logger.finish("FAILED", error=f"Review and merge failed: {exc}")

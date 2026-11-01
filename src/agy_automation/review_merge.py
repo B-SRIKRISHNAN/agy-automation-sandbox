@@ -5,17 +5,21 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from .cleanup import cleanup_worktree
 from .config import Colors, find_agent_instructions, get_target_repo
 from .engine import verify_agy_installed
 from .git_utils import (
+    abort_merge,
     get_commits_between,
     get_current_branch,
     get_diff_raw,
     get_diff_stat,
     get_dirty_tracked_files,
+    get_unmerged_files,
+    get_workspace_status,
+    is_merge_in_progress,
     run_git,
     worktree_repair,
 )
@@ -30,6 +34,59 @@ def format_merge_message(branch_name: str, base_branch: str) -> str:
     return msg
 
 
+def ensure_clean_workspace(
+    repo_dir: Path,
+    base_branch: str,
+    session_logger: Optional[Any] = None,
+    interactive: bool = True,
+) -> bool:
+    """Check if repository workspace has uncommitted tracked changes, waiting interactively if needed."""
+    attempt = 0
+    while True:
+        attempt += 1
+        dirty_tracked, untracked = get_workspace_status(repo_dir)
+        if not dirty_tracked:
+            if attempt > 1:
+                print(f"{Colors.GREEN}[OK] Main workspace is now clean. Proceeding with merge...{Colors.RESET}")
+                if session_logger:
+                    session_logger.log_event("coordinator", "merge", "workspace_clean_verified", {"attempts": attempt})
+            return True
+
+        if session_logger:
+            session_logger.log_event("coordinator", "merge", "workspace_dirty_detected", {
+                "attempt": attempt,
+                "dirty_tracked": dirty_tracked,
+                "untracked_count": len(untracked),
+            })
+
+        print(f"\n{Colors.YELLOW}[WARNING] Main workspace has uncommitted local changes on '{base_branch}':{Colors.RESET}")
+        for d in dirty_tracked:
+            print(f"{Colors.YELLOW}  {d}{Colors.RESET}")
+        print(f"{Colors.CYAN}Please stash ('git stash') or commit your local changes before merging.{Colors.RESET}")
+
+        if not interactive:
+            print(f"{Colors.RED}[ERROR] Non-interactive mode cannot wait for workspace cleanup. Aborting merge.{Colors.RESET}")
+            if session_logger:
+                session_logger.log_event("coordinator", "merge", "merge_aborted_dirty_workspace_unattended")
+            return False
+
+        try:
+            choice = input(
+                f"{Colors.GREEN}Press [Enter] to re-check and retry merge (or type 'abort' to cancel): {Colors.RESET}"
+            ).strip()
+        except (EOFError, KeyboardInterrupt):
+            print(f"\n{Colors.YELLOW}[ABORT] Workspace cleanup cancelled by user.{Colors.RESET}")
+            if session_logger:
+                session_logger.log_event("coordinator", "merge", "workspace_clean_aborted_by_user")
+            return False
+
+        if choice.lower() in ("abort", "cancel", "c"):
+            print(f"{Colors.YELLOW}[INFO] Merge cancelled by user due to uncommitted workspace changes.{Colors.RESET}")
+            if session_logger:
+                session_logger.log_event("coordinator", "merge", "workspace_clean_aborted_by_user")
+            return False
+
+
 def review_and_merge(
     worktree_name: str,
     branch_name: str,
@@ -37,6 +94,7 @@ def review_and_merge(
     auto_approve: bool = False,
     interactive: bool = True,
     repo_dir: Optional[Path] = None,
+    session_logger: Optional[Any] = None,
 ) -> bool:
     """Generate an AI code review with agy, request approval, and perform linear/FF merge."""
     if repo_dir is None:
@@ -146,36 +204,167 @@ Diff Details:
         approval = ""
 
     if approval and approval.lower() in ("y", "yes"):
-        dirty_tracked = get_dirty_tracked_files(repo_dir)
-        if dirty_tracked:
-            print(f"{Colors.RED}[ERROR] Main workspace has uncommitted tracked changes:{Colors.RESET}")
-            for d in dirty_tracked:
-                print(f"{Colors.YELLOW}  {d}{Colors.RESET}")
-            print(f"{Colors.YELLOW}Please stash or commit your local changes on '{base_branch}' before merging.{Colors.RESET}")
+        if not ensure_clean_workspace(repo_dir, base_branch, session_logger, interactive):
             return False
 
         print(f"\n{Colors.CYAN}[INFO] Checking out base branch '{base_branch}'...{Colors.RESET}")
-        run_git(["checkout", base_branch], cwd=repo_dir, capture_output=False)
+        co_res = run_git(["checkout", base_branch], cwd=repo_dir, capture_output=True)
+        if co_res.returncode != 0:
+            err_msg = co_res.stderr.strip() or co_res.stdout.strip()
+            print(f"{Colors.RED}[ERROR] Failed to checkout base branch '{base_branch}':{Colors.RESET}")
+            print(f"{Colors.YELLOW}{err_msg}{Colors.RESET}")
+            if session_logger:
+                session_logger.log_event("coordinator", "merge", "checkout_failed", {"error": err_msg})
+            return False
 
         print(f"\n{Colors.CYAN}[INFO] Merging branch '{branch_name}' into '{base_branch}' (fast-forward)...{Colors.RESET}")
-        ff_res = run_git(["merge", "--ff-only", branch_name], cwd=repo_dir, capture_output=False)
+        if session_logger:
+            session_logger.log_event("coordinator", "merge", "fast_forward_attempt", {
+                "branch": branch_name,
+                "target": base_branch,
+            })
+
+        ff_res = run_git(["merge", "--ff-only", branch_name], cwd=repo_dir, capture_output=True)
         if ff_res.returncode == 0:
             print(f"{Colors.GREEN}[SUCCESS] Fast-forward merge completed.{Colors.RESET}")
+            if session_logger:
+                session_logger.log_event("coordinator", "merge", "fast_forward_success")
         else:
             print(f"{Colors.YELLOW}[INFO] Fast-forward not possible. Attempting standard merge...{Colors.RESET}")
             merge_msg = format_merge_message(branch_name, base_branch)
-            std_res = run_git(
-                ["merge", branch_name, "-m", merge_msg],
-                cwd=repo_dir,
-                capture_output=False,
-            )
-            if std_res.returncode != 0:
-                print(f"{Colors.RED}[ERROR] Merge hit conflicts. Aborting merge to restore clean state...{Colors.RESET}")
-                run_git(["merge", "--abort"], cwd=repo_dir)
-                print(f"{Colors.YELLOW}        Base branch restored to clean state. Worktree preserved for manual resolution.{Colors.RESET}")
-                return False
+            if session_logger:
+                session_logger.log_event("coordinator", "merge", "standard_merge_attempt", {
+                    "message": merge_msg
+                })
+
+            while True:
+                std_res = run_git(["merge", branch_name, "-m", merge_msg], cwd=repo_dir, capture_output=True)
+                if std_res.returncode == 0:
+                    print(f"{Colors.GREEN}[SUCCESS] Standard merge completed successfully.{Colors.RESET}")
+                    if session_logger:
+                        session_logger.log_event("coordinator", "merge", "standard_merge_success")
+                    break
+
+                output_combined = (std_res.stderr + "\n" + std_res.stdout).strip()
+
+                # Check if failure is due to untracked or local files that would be overwritten
+                if "would be overwritten by merge" in output_combined:
+                    print(f"\n{Colors.YELLOW}[WARNING] Untracked or local files would be overwritten by merge:{Colors.RESET}")
+                    for err_line in output_combined.splitlines():
+                        if "error:" in err_line or "untracked" in err_line.lower() or "\t" in err_line:
+                            print(f"{Colors.YELLOW}  {err_line.strip()}{Colors.RESET}")
+
+                    if session_logger:
+                        session_logger.log_event("coordinator", "merge", "merge_blocked_by_untracked_files", {
+                            "details": output_combined[:500]
+                        })
+
+                    if not interactive:
+                        print(f"{Colors.RED}[ERROR] Cannot resolve untracked file collisions non-interactively. Aborting merge.{Colors.RESET}")
+                        return False
+
+                    print(f"{Colors.CYAN}Please remove, move, or stash the conflicting untracked files.{Colors.RESET}")
+                    try:
+                        choice = input(f"{Colors.GREEN}Press [Enter] to re-attempt merge (or type 'abort' to cancel): {Colors.RESET}").strip()
+                    except (EOFError, KeyboardInterrupt):
+                        return False
+
+                    if choice.lower() in ("abort", "cancel", "c"):
+                        print(f"{Colors.YELLOW}[INFO] Merge cancelled by user.{Colors.RESET}")
+                        if session_logger:
+                            session_logger.log_event("coordinator", "merge", "merge_aborted_by_user")
+                        return False
+
+                    continue
+
+                # Check if failure is merge conflict
+                unmerged = get_unmerged_files(repo_dir)
+                if unmerged or is_merge_in_progress(repo_dir):
+                    if session_logger:
+                        session_logger.log_event("coordinator", "merge", "merge_conflict_detected", {
+                            "conflicts": unmerged
+                        })
+
+                    print(f"\n{Colors.YELLOW}==================== MERGE CONFLICT DETECTED ===================={Colors.RESET}")
+                    print(f"{Colors.RED}[WARNING] Git merge encountered conflict(s) in {len(unmerged)} file(s):{Colors.RESET}")
+                    for u in unmerged:
+                        print(f"{Colors.YELLOW}  * {u}{Colors.RESET}")
+                    print(f"\n{Colors.CYAN}Instructions:{Colors.RESET}")
+                    print(f"{Colors.GRAY}  1. Open the file(s) above and resolve the conflict markers (<<<<<<<, =======, >>>>>>>){Colors.RESET}")
+                    print(f"{Colors.GRAY}  2. Stage the resolved file(s): git add <file>{Colors.RESET}")
+                    print(f"{Colors.GRAY}  3. Press [Enter] below to finalize the merge commit.{Colors.RESET}")
+                    print(f"{Colors.GRAY}  (Or type 'abort' to cancel the merge and restore base branch).{Colors.RESET}")
+                    print(f"{Colors.YELLOW}================================================================={Colors.RESET}")
+
+                    if not interactive:
+                        print(f"{Colors.RED}[ERROR] Cannot resolve merge conflicts in non-interactive mode. Aborting merge.{Colors.RESET}")
+                        abort_merge(repo_dir)
+                        if session_logger:
+                            session_logger.log_event("coordinator", "merge", "merge_conflict_unattended_abort")
+                        return False
+
+                    conflict_resolved = False
+                    while not conflict_resolved:
+                        try:
+                            c_choice = input(f"\n{Colors.GREEN}Press [Enter] after resolving conflicts (or type 'abort' to cancel): {Colors.RESET}").strip()
+                        except (EOFError, KeyboardInterrupt):
+                            print(f"\n{Colors.YELLOW}[ABORT] Merge resolution cancelled. Aborting merge...{Colors.RESET}")
+                            abort_merge(repo_dir)
+                            if session_logger:
+                                session_logger.log_event("coordinator", "merge", "merge_conflict_aborted_by_user")
+                            return False
+
+                        if c_choice.lower() in ("abort", "cancel", "c"):
+                            print(f"{Colors.YELLOW}[INFO] Aborting merge to restore clean state...{Colors.RESET}")
+                            abort_merge(repo_dir)
+                            if session_logger:
+                                session_logger.log_event("coordinator", "merge", "merge_conflict_aborted_by_user")
+                            print(f"{Colors.GREEN}[OK] Base branch restored to clean state. Worktree preserved.{Colors.RESET}")
+                            return False
+
+                        remaining_unmerged = get_unmerged_files(repo_dir)
+                        if remaining_unmerged:
+                            print(f"\n{Colors.RED}[WARNING] The following file(s) still have unresolved conflict markers:{Colors.RESET}")
+                            for ru in remaining_unmerged:
+                                print(f"{Colors.YELLOW}  * {ru}{Colors.RESET}")
+                            print(f"{Colors.CYAN}Please resolve the conflict markers and stage with 'git add <file>'.{Colors.RESET}")
+                            if session_logger:
+                                session_logger.log_event("coordinator", "merge", "merge_conflict_still_unresolved", {
+                                    "remaining": remaining_unmerged
+                                })
+                            continue
+
+                        # Finalize the merge commit
+                        print(f"\n{Colors.CYAN}[INFO] Finalizing merge commit...{Colors.RESET}")
+                        commit_res = run_git(["commit", "--no-edit"], cwd=repo_dir, capture_output=True)
+                        if commit_res.returncode == 0:
+                            print(f"{Colors.GREEN}[SUCCESS] Merge conflicts resolved and merge commit finalized!{Colors.RESET}")
+                            if session_logger:
+                                session_logger.log_event("coordinator", "merge", "merge_conflicts_resolved_and_committed")
+                            conflict_resolved = True
+                            break
+                        else:
+                            commit_err = commit_res.stderr.strip() or commit_res.stdout.strip()
+                            print(f"{Colors.RED}[ERROR] Failed to commit merge: {commit_err}{Colors.RESET}")
+                            if session_logger:
+                                session_logger.log_event("coordinator", "merge", "merge_commit_failed", {"error": commit_err})
+
+                    break
+                else:
+                    print(f"{Colors.RED}[ERROR] Merge failed:{Colors.RESET}")
+                    print(f"{Colors.YELLOW}{output_combined}{Colors.RESET}")
+                    if is_merge_in_progress(repo_dir):
+                        abort_merge(repo_dir)
+                    if session_logger:
+                        session_logger.log_event("coordinator", "merge", "merge_unexpected_failure", {"error": output_combined[:500]})
+                    return False
 
         print(f"{Colors.GREEN}[SUCCESS] Successfully merged '{branch_name}' into '{base_branch}'!{Colors.RESET}")
+        if session_logger:
+            session_logger.log_event("coordinator", "merge", "merge_finished_successfully", {
+                "branch": branch_name,
+                "base_branch": base_branch,
+            })
 
         # Clean up worktree and branch
         print(f"\n{Colors.CYAN}[INFO] Cleaning up worktree and temporary branch...{Colors.RESET}")
