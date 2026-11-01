@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
+# ==============================================================================
+# DEPRECATED: This script is legacy and no longer actively maintained.
+# All new features are developed in the universal Python engine (src/agy_automation/).
+# Please use: python3 start_issue.py (or python3 bin/start-issue.py)
+# ==============================================================================
+echo -e "\033[93m[DEPRECATION WARNING] $(basename "$0") is legacy and deprecated. Please use Python: python3 start_issue.py\033[0m" >&2
+
+
 WORKTREE_NAME=""
 ISSUE_FILE=""
 TARGET_REPO=""

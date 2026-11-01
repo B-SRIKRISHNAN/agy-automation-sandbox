@@ -1,4 +1,11 @@
 <#
+==============================================================================
+DEPRECATED: This script is legacy and no longer actively maintained.
+All new features are developed in the universal Python engine (src/agy_automation/).
+Please use: python start_issue.py (or python bin/start-issue.py)
+==============================================================================
+#>
+<#
 .SYNOPSIS
     Master coordinator script to automate GitHub issue resolution with Antigravity and Git worktrees.
 
@@ -42,6 +49,8 @@ param (
     [switch]$InteractiveSandbox,
     [switch]$DryRun
 )
+
+Write-Host "[DEPRECATION WARNING] $($MyInvocation.MyCommand.Name) is legacy and deprecated. Please use Python: python start_issue.py" -ForegroundColor Yellow
 
 $ErrorActionPreference = "Stop"
 

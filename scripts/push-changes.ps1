@@ -1,4 +1,11 @@
 <#
+==============================================================================
+DEPRECATED: This script is legacy and no longer actively maintained.
+All new features are developed in the universal Python engine (src/agy_automation/).
+Please use: python start_issue.py (or python bin/start-issue.py)
+==============================================================================
+#>
+<#
 .SYNOPSIS
     Prompts user for final permission and pushes commits to the remote branch.
 
@@ -22,6 +29,9 @@ param (
     [string]$BranchName = "",
     [string]$Remote = "origin"
 )
+
+Write-Host "[DEPRECATION WARNING] $($MyInvocation.MyCommand.Name) is legacy and deprecated. Please use Python: python start_issue.py" -ForegroundColor Yellow
+
 
 $ErrorActionPreference = "Stop"
 

@@ -1,4 +1,11 @@
 <#
+==============================================================================
+DEPRECATED: This script is legacy and no longer actively maintained.
+All new features are developed in the universal Python engine (src/agy_automation/).
+Please use: python start_issue.py (or python bin/start-issue.py)
+==============================================================================
+#>
+<#
 .SYNOPSIS
     Cleans up a Git worktree, prunes worktrees, and deletes the associated branch.
 
@@ -27,6 +34,9 @@ param (
     [string]$BranchName = "agent-branch1",
     [switch]$Force
 )
+
+Write-Host "[DEPRECATION WARNING] $($MyInvocation.MyCommand.Name) is legacy and deprecated. Please use Python: python start_issue.py" -ForegroundColor Yellow
+
 
 $ErrorActionPreference = "Stop"
 
