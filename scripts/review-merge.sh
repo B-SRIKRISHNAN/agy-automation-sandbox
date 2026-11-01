@@ -160,7 +160,11 @@ if [[ "$APPROVAL" =~ ^[Yy]$ ]]; then
         echo "[SUCCESS] Fast-forward merge completed."
     else
         echo "[INFO] Fast-forward not possible. Attempting standard merge..."
-        if ! git merge "$BRANCH_NAME" -m "Merge branch '$BRANCH_NAME' into $BASE_BRANCH"; then
+        MERGE_MSG="Merge branch '$BRANCH_NAME' into $BASE_BRANCH"
+        if [[ "$BRANCH_NAME" =~ issue-([0-9]+) ]]; then
+            MERGE_MSG="Merge branch '$BRANCH_NAME' into $BASE_BRANCH (Fixes #${BASH_REMATCH[1]})"
+        fi
+        if ! git merge "$BRANCH_NAME" -m "$MERGE_MSG"; then
             echo "[ERROR] Merge hit conflicts. Aborting merge to restore clean state..."
             git merge --abort 2>/dev/null || true
             echo "        Base branch restored to clean state. Worktree preserved for manual resolution."

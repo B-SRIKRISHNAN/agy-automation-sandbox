@@ -44,6 +44,20 @@ elif [ -f "$WORKTREE_DIR/ISSUE_CONTEXT.md" ]; then
     ISSUE_CONTENT="$(cat "$WORKTREE_DIR/ISSUE_CONTEXT.md")"
 fi
 
+# Detect issue number if in issue mode
+ISSUE_NUM=""
+if [[ "$WORKTREE_NAME" =~ worktree-issue-([0-9]+) ]]; then
+    ISSUE_NUM="${BASH_REMATCH[1]}"
+elif [ -n "$ISSUE_CONTENT" ]; then
+    FIRST_LINE="$(echo "$ISSUE_CONTENT" | head -n 1 2>/dev/null || true)"
+    if [[ "$FIRST_LINE" =~ ^#\ Issue\ #([0-9]+) ]]; then
+        ISSUE_NUM="${BASH_REMATCH[1]}"
+    fi
+fi
+if [ -n "$ISSUE_NUM" ]; then
+    echo "[INFO] Detected GitHub Issue #$ISSUE_NUM. Commit subject header will include '(Fixes #$ISSUE_NUM)'."
+fi
+
 # Locate repository agent instructions (AGENT_INSTRUCTIONS.md, case-insensitive)
 INSTRUCTIONS_PATH=""
 INSTRUCTIONS_CONTENT=""
@@ -133,7 +147,26 @@ if [ "$INTERACTIVE_MODE" = true ]; then
     if [ -n "$DIRTY_STATUS" ]; then
         echo "[INFO] Detected uncommitted changes remaining in worktree. Staging and committing..."
         git add -A
-        git commit -m "feat($WORKTREE_NAME): interactive session updates" -m "Committed remaining workspace changes from interactive sandbox session." || true
+        if [ -n "$ISSUE_NUM" ]; then
+            git commit -m "feat($WORKTREE_NAME): interactive session updates (Fixes #$ISSUE_NUM)" -m "Committed remaining workspace changes from interactive sandbox session." || true
+        else
+            git commit -m "feat($WORKTREE_NAME): interactive session updates" -m "Committed remaining workspace changes from interactive sandbox session." || true
+        fi
+    fi
+
+    # Deterministic check for interactive mode
+    if [ -n "$ISSUE_NUM" ] && git rev-parse HEAD >/dev/null 2>&1; then
+        CURRENT_SUBJECT="$(git log -1 --format=%s)"
+        if ! echo "$CURRENT_SUBJECT" | grep -Ei "(fixes|closes|resolves)[[:space:]]+#$ISSUE_NUM([^0-9]|$)" >/dev/null 2>&1; then
+            echo "[INFO] Appending '(Fixes #$ISSUE_NUM)' to commit subject header..."
+            COMMIT_BODY="$(git log -1 --format=%b)"
+            NEW_SUBJECT="$CURRENT_SUBJECT (Fixes #$ISSUE_NUM)"
+            if [ -n "$COMMIT_BODY" ]; then
+                git commit --amend -m "$NEW_SUBJECT" -m "$COMMIT_BODY" || true
+            else
+                git commit --amend -m "$NEW_SUBJECT" || true
+            fi
+        fi
     fi
 
     echo ""
@@ -145,6 +178,20 @@ if [ "$INTERACTIVE_MODE" = true ]; then
 fi
 
 # Formulate prompt for agy
+
+if [ -n "$ISSUE_NUM" ]; then
+    COMMIT_INSTRUCTIONS="Create a comprehensive, conventional commit message detailing:
+   - Concise title adhering to Conventional Commits with '(Fixes #$ISSUE_NUM)' at the end of the subject:
+     Format: '<type>(<scope>): <summary> (Fixes #$ISSUE_NUM)'
+     Example: 'fix(parser): resolve null pointer when tokens list is empty (Fixes #$ISSUE_NUM)'
+   - A short explanation of the problem and rationale in the commit body
+   - A bulleted list of all specific changes made"
+else
+    COMMIT_INSTRUCTIONS="Create a comprehensive, conventional commit message detailing:
+   - Concise title (e.g. 'feat(scope): ...' or 'fix(scope): ...')
+   - A short explanation of the problem and rationale in the commit body
+   - A bulleted list of all specific changes made"
+fi
 
 if [ -n "$INSTRUCTIONS_CONTENT" ]; then
     PROMPT="You are an autonomous AI software engineer working in a dedicated git worktree at $(pwd).
@@ -165,10 +212,7 @@ Workflow Instructions:
 3. Work Inside Worktree: Implement all necessary documentation, tests, and code changes in the proper sequence inside this worktree ($(pwd)).
 4. Test and Verify: Execute all tests and validation steps required by the repository instructions to ensure complete verification.
 5. Review Git Diff: Review your git diff carefully to confirm all changes conform to repository conventions and standards.
-6. Commit Changes: Create a comprehensive, conventional commit message detailing:
-   - Concise title (e.g. 'feat(scope): ...' or 'fix(scope): ...')
-   - A short explanation of the problem and rationale
-   - A bulleted list of all specific changes made
+6. Commit Changes: $COMMIT_INSTRUCTIONS
    Stage the relevant files and commit them to the current branch using git commit.
 7. Conclude your response with a concise summary of the resolved issue and how the sequence and standards in $INSTRUCTIONS_FILENAME were satisfied.
 "
@@ -183,10 +227,7 @@ Instructions:
 2. Implement all necessary code, configuration, or documentation changes inside this worktree.
 3. Test and verify your changes carefully.
 4. Once your implementation is complete and verified, review the git diff.
-5. Create a comprehensive, conventional commit message detailing:
-   - Concise title (e.g. 'feat(scope): ...' or 'fix(scope): ...')
-   - A short explanation of the problem and rationale
-   - A bulleted list of all specific changes made
+5. $COMMIT_INSTRUCTIONS
 6. Stage the relevant files and commit them to the current branch using git commit.
 7. Conclude your response with a concise summary of the resolved issue.
 "
@@ -250,7 +291,26 @@ DIRTY_STATUS="$(git status --porcelain)"
 if [ -n "$DIRTY_STATUS" ]; then
     echo "[INFO] Detected uncommitted changes remaining in worktree. Staging and committing..."
     git add -A
-    git commit -m "feat($WORKTREE_NAME): automated resolution of issue" -m "Committed remaining automated workspace changes." || true
+    if [ -n "$ISSUE_NUM" ]; then
+        git commit -m "fix($WORKTREE_NAME): automated resolution of issue (Fixes #$ISSUE_NUM)" -m "Committed remaining automated workspace changes." || true
+    else
+        git commit -m "feat($WORKTREE_NAME): automated resolution of session" -m "Committed remaining automated workspace changes." || true
+    fi
+fi
+
+# Deterministic Enforcement: Verify latest commit subject contains issue closing tag
+if [ -n "$ISSUE_NUM" ] && git rev-parse HEAD >/dev/null 2>&1; then
+    CURRENT_SUBJECT="$(git log -1 --format=%s)"
+    if ! echo "$CURRENT_SUBJECT" | grep -Ei "(fixes|closes|resolves)[[:space:]]+#$ISSUE_NUM([^0-9]|$)" >/dev/null 2>&1; then
+        echo "[INFO] Appending '(Fixes #$ISSUE_NUM)' to commit subject header..."
+        COMMIT_BODY="$(git log -1 --format=%b)"
+        NEW_SUBJECT="$CURRENT_SUBJECT (Fixes #$ISSUE_NUM)"
+        if [ -n "$COMMIT_BODY" ]; then
+            git commit --amend -m "$NEW_SUBJECT" -m "$COMMIT_BODY" || true
+        else
+            git commit --amend -m "$NEW_SUBJECT" || true
+        fi
+    fi
 fi
 
 echo ""

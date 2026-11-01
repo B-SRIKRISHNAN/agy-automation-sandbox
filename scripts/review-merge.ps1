@@ -181,7 +181,11 @@ if ($approval -and $approval.Trim().ToLower() -in @("y", "yes")) {
         $ffOutput | Out-Host
     } else {
         Write-Host "[INFO] Fast-forward not possible. Attempting standard merge..." -ForegroundColor Yellow
-        $mergeOutput = (git merge $BranchName -m "Merge branch '$BranchName' into $BaseBranch" 2>&1)
+        $mergeMsg = "Merge branch '$BranchName' into $BaseBranch"
+        if ($BranchName -match 'issue-(\d+)') {
+            $mergeMsg = "Merge branch '$BranchName' into $BaseBranch (Fixes #$($Matches[1]))"
+        }
+        $mergeOutput = (git merge $BranchName -m $mergeMsg 2>&1)
         if ($LASTEXITCODE -ne 0) {
             Write-Host "[ERROR] Merge hit conflicts. Aborting merge to restore clean state..." -ForegroundColor Red
             git merge --abort 2>$null | Out-Null

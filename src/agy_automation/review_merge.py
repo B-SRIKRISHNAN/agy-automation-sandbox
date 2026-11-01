@@ -1,5 +1,6 @@
 """AI code review generation, merge approval, and safe Git integration."""
 
+import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,15 @@ from .git_utils import (
     run_git,
     worktree_repair,
 )
+
+
+def format_merge_message(branch_name: str, base_branch: str) -> str:
+    """Format merge commit message, including issue closing tag if branch targets an issue."""
+    msg = f"Merge branch '{branch_name}' into {base_branch}"
+    match = re.search(r"issue-(\d+)", branch_name)
+    if match:
+        msg = f"{msg} (Fixes #{match.group(1)})"
+    return msg
 
 
 def review_and_merge(
@@ -153,8 +163,9 @@ Diff Details:
             print(f"{Colors.GREEN}[SUCCESS] Fast-forward merge completed.{Colors.RESET}")
         else:
             print(f"{Colors.YELLOW}[INFO] Fast-forward not possible. Attempting standard merge...{Colors.RESET}")
+            merge_msg = format_merge_message(branch_name, base_branch)
             std_res = run_git(
-                ["merge", branch_name, "-m", f"Merge branch '{branch_name}' into {base_branch}"],
+                ["merge", branch_name, "-m", merge_msg],
                 cwd=repo_dir,
                 capture_output=False,
             )
