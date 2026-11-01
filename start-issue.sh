@@ -183,6 +183,16 @@ fi
 
 WORKTREE_PATH="$TARGET_REPO/.worktrees/$WORKTREE_NAME"
 
+# Setup run logging directory in user home (OS-agnostic, outside repo)
+AGY_RUNS_DIR="${AGY_RUNS_DIR:-$HOME/.agy-automation/runs}"
+RUN_TIMESTAMP="$(date -u +%Y%m%d_%H%M%S)"
+SAFE_PROJ="$(basename "$TARGET_REPO" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_.-]/_/g')"
+SAFE_TARGET="${SESSION_SLUG:-issue-$ISSUE_NUMBER}"
+AGY_RUN_ID="${RUN_TIMESTAMP}_${SAFE_PROJ}_${SAFE_TARGET}"
+RUN_DIR="$AGY_RUNS_DIR/$AGY_RUN_ID"
+mkdir -p "$RUN_DIR"
+export AGY_RUNS_DIR AGY_RUN_ID RUN_DIR
+
 # Check for repository agent instructions (AGENT_INSTRUCTIONS.md, case-insensitive)
 AGENT_INSTRUCTIONS_FILE=""
 AGENT_INSTRUCTIONS_NAME=""
@@ -214,6 +224,7 @@ echo "Branch Name      : $BRANCH_NAME"
 echo "Agent Instr.     : ${AGENT_INSTRUCTIONS_NAME:-None (standard workflow)}"
 echo "Container Engine : $ENGINE"
 echo "Sandbox Mode     : $(if [ "$INTERACTIVE_SANDBOX" = true ]; then echo 'Interactive Antigravity (permissionless)'; else echo 'Automated Antigravity agent runner'; fi)"
+echo "Run Log Dir      : $RUN_DIR"
 
 # ==========================================================
 # STEP 1: Fetch issue details or initialize session context

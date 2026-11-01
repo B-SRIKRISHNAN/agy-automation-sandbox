@@ -271,7 +271,7 @@ fi
 
 # Execute agy in automated mode, streaming live output to console
 AGY_EXIT_CODE=0
-agy --dangerously-skip-permissions --log-file "$LOG_FILE" -p "$PROMPT" || AGY_EXIT_CODE=$?
+agy --dangerously-skip-permissions --log-file "$LOG_FILE" -p "$PROMPT" --output-format stream-json || AGY_EXIT_CODE=$?
 
 # Stop background monitors
 kill "$HEARTBEAT_PID" 2>/dev/null || true

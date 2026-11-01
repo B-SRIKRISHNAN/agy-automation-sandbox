@@ -18,6 +18,7 @@ from .fetch_issue import fetch_and_confirm_issue
 from .git_utils import get_current_branch, sanitize_session_name
 from .push import push_changes
 from .review_merge import review_and_merge
+from .run_logger import RunSession
 from .sandbox import run_sandbox
 from .worktree import create_worktree, inject_issue_context
 
@@ -98,6 +99,27 @@ def run_pipeline(
     # Check for repository agent instructions
     _, instr_name = find_agent_instructions(target_repo)
 
+    # Initialize RunSession for isolated, OS-agnostic logging
+    session_target = session_slug if is_session else str(issue_number)
+    session_logger = RunSession(project_name=target_repo.name, target=session_target)
+    session_logger.update_context(
+        repo_path=str(target_repo),
+        base_branch=current_branch,
+        branch_name=branch_name,
+        worktree_name=worktree_name,
+        worktree_path=str(worktree_path),
+        engine=engine_desc,
+        container_name=f"{target_repo.name}-sandbox",
+    )
+    session_logger.log_event("coordinator", "init", "pipeline_initialized", {
+        "mode": "session" if is_session else "issue",
+        "target": session_target,
+        "base_branch": current_branch,
+        "branch_name": branch_name,
+        "worktree": worktree_name,
+        "engine": engine_desc,
+    })
+
     if is_session:
         print(f"\n{Colors.CYAN}[START] Starting permissionless sandbox session '{session_slug}'...{Colors.RESET}")
     else:
@@ -109,6 +131,7 @@ def run_pipeline(
     print(f"{Colors.GRAY}Agent Instr.     : {instr_name if instr_name else 'None (standard workflow)'}{Colors.RESET}")
     print(f"{Colors.GRAY}Container Engine : {engine_desc}{Colors.RESET}")
     print(f"{Colors.GRAY}Sandbox Mode     : {'Interactive Antigravity (permissionless)' if interactive_sandbox else 'Automated Antigravity agent runner'}{Colors.RESET}")
+    print(f"{Colors.GRAY}Run Log Dir      : {session_logger.run_dir}{Colors.RESET}")
 
     # ==========================================================
     # STEP 1: Fetch issue details or initialize session context
@@ -125,9 +148,11 @@ Autonomous interactive development session scoped to worktree `{worktree_name}`.
 Execute tasks, queries, code modifications, and tests inside this protected container sandbox.
 """
         issue_data = {"number": session_slug, "context": session_context}
+        session_logger.log_event("coordinator", "fetch", "session_initialized", {"session_slug": session_slug})
         print(f"{Colors.GREEN}[OK] Local session '{session_slug}' initialized (bypassing GitHub issues).{Colors.RESET}")
     else:
         print(f"\n{Colors.CYAN}>>> [STEP 1/5] Fetching issue details from GitHub...{Colors.RESET}")
+        session_logger.log_event("coordinator", "fetch", "issue_fetch_started", {"issue_number": issue_number})
         try:
             issue_data = fetch_and_confirm_issue(
                 issue_number,
@@ -135,12 +160,24 @@ Execute tasks, queries, code modifications, and tests inside this protected cont
                 interactive=not auto_approve,
             )
         except Exception as exc:
+            session_logger.finish("FAILED", error=f"Issue fetch failed: {exc}")
             print(f"{Colors.RED}[ERROR] {exc}{Colors.RESET}")
             return 1
 
         if not issue_data:
+            session_logger.finish("ABORTED", error="Process aborted or issue fetch failed")
             print(f"{Colors.YELLOW}[INFO] Process aborted or issue fetch failed.{Colors.RESET}")
             return 0
+
+        session_logger.update_context(
+            issue_title=issue_data.get("title", ""),
+            issue_url=issue_data.get("url", ""),
+        )
+        session_logger.log_event("coordinator", "fetch", "issue_fetch_completed", {
+            "issue_number": issue_number,
+            "title": issue_data.get("title", ""),
+            "url": issue_data.get("url", ""),
+        })
 
     # Dry-Run Simulation Intercept
     if dry_run:
@@ -154,86 +191,123 @@ Execute tasks, queries, code modifications, and tests inside this protected cont
         print(f"{Colors.WHITE}  - Container Engine: {engine if engine != 'auto' else f'auto-detect ({engine_desc})'}{Colors.RESET}")
         print(f"{Colors.WHITE}  - Sandbox Mode    : {'Interactive permissionless Antigravity session' if interactive_sandbox else 'Automated Antigravity agent runner'}{Colors.RESET}")
         print(f"{Colors.WHITE}  - Build Sandbox   : {build}{Colors.RESET}")
+        print(f"{Colors.WHITE}  - Session Logs    : {session_logger.run_dir}{Colors.RESET}")
         print(f"{Colors.MAGENTA}[DRY RUN] Simulation complete. No worktree created, no container started, no commits made.{Colors.RESET}")
+        session_logger.log_event("coordinator", "dry_run", "simulation_completed")
+        session_logger.finish("COMPLETED")
         return 0
 
-    # ==========================================================
-    # STEP 2: Create isolated Git Worktree and branch
-    # ==========================================================
-    print(f"\n{Colors.CYAN}>>> [STEP 2/5] Creating isolated Git Worktree...{Colors.RESET}")
-    try:
-        create_worktree(
-            worktree_name=worktree_name,
-            branch_name=branch_name,
-            base_branch=current_branch,
-            auto_approve=auto_approve,
-            interactive=not auto_approve,
-            repo_dir=target_repo,
-        )
-    except Exception as exc:
-        print(f"{Colors.RED}[ERROR] Failed to create git worktree: {exc}{Colors.RESET}")
-        return 1
-
-    # Inject issue or session context
-    context_dest = inject_issue_context(worktree_path, issue_data["context"])
-    print(f"{Colors.GREEN}[OK] Injected context into worktree: {context_dest}{Colors.RESET}")
-    if instr_name:
-        print(f"{Colors.GREEN}[OK] Active repository agent instructions: {instr_name}{Colors.RESET}")
-
-    # ==========================================================
-    # STEP 3: Run Sandbox with agy
-    # ==========================================================
-    print(f"\n{Colors.CYAN}>>> [STEP 3/5] Launching Sandbox & running Antigravity (agy)...{Colors.RESET}")
-    issue_rel_path = f".worktrees/{worktree_name}/ISSUE_CONTEXT.md"
-    sandbox_exit = run_sandbox(
-        worktree_name=worktree_name,
-        issue_file=issue_rel_path,
-        target_repo=target_repo,
-        instructions_file=instr_name,
-        build=build,
-        interactive=interactive_sandbox,
-        container_engine=engine,
-    )
-    if sandbox_exit != 0:
-        print(f"{Colors.RED}[ERROR] Sandbox run failed with exit code {sandbox_exit}.{Colors.RESET}")
-        return sandbox_exit
-
-    # ==========================================================
-    # STEP 4: Review changes with agy, confirm, merge & cleanup
-    # ==========================================================
-    print(f"\n{Colors.CYAN}>>> [STEP 4/5] Reviewing changes and merging...{Colors.RESET}")
     merged = False
+    pushed = False
+
     try:
-        merged = review_and_merge(
+        # ==========================================================
+        # STEP 2: Create isolated Git Worktree and branch
+        # ==========================================================
+        print(f"\n{Colors.CYAN}>>> [STEP 2/5] Creating isolated Git Worktree...{Colors.RESET}")
+        session_logger.log_event("coordinator", "worktree", "worktree_creation_started", {
+            "worktree_name": worktree_name,
+            "branch_name": branch_name,
+        })
+        try:
+            create_worktree(
+                worktree_name=worktree_name,
+                branch_name=branch_name,
+                base_branch=current_branch,
+                auto_approve=auto_approve,
+                interactive=not auto_approve,
+                repo_dir=target_repo,
+            )
+        except Exception as exc:
+            session_logger.finish("FAILED", error=f"Worktree creation failed: {exc}")
+            print(f"{Colors.RED}[ERROR] Failed to create git worktree: {exc}{Colors.RESET}")
+            return 1
+
+        session_logger.log_event("coordinator", "worktree", "worktree_created", {
+            "worktree_path": str(worktree_path),
+        })
+
+        # Inject issue or session context
+        context_dest = inject_issue_context(worktree_path, issue_data["context"])
+        print(f"{Colors.GREEN}[OK] Injected context into worktree: {context_dest}{Colors.RESET}")
+        if instr_name:
+            print(f"{Colors.GREEN}[OK] Active repository agent instructions: {instr_name}{Colors.RESET}")
+
+        # ==========================================================
+        # STEP 3: Run Sandbox with agy
+        # ==========================================================
+        print(f"\n{Colors.CYAN}>>> [STEP 3/5] Launching Sandbox & running Antigravity (agy)...{Colors.RESET}")
+        session_logger.log_event("coordinator", "sandbox", "sandbox_started", {
+            "instructions": instr_name,
+            "interactive": interactive_sandbox,
+        })
+        issue_rel_path = f".worktrees/{worktree_name}/ISSUE_CONTEXT.md"
+        sandbox_exit = run_sandbox(
             worktree_name=worktree_name,
-            branch_name=branch_name,
-            base_branch=current_branch,
-            auto_approve=auto_approve,
-            interactive=not auto_approve,
-            repo_dir=target_repo,
+            issue_file=issue_rel_path,
+            target_repo=target_repo,
+            instructions_file=instr_name,
+            build=build,
+            interactive=interactive_sandbox,
+            container_engine=engine,
+            session_logger=session_logger,
         )
+        if sandbox_exit != 0:
+            session_logger.finish("FAILED", error=f"Sandbox run failed with exit code {sandbox_exit}")
+            print(f"{Colors.RED}[ERROR] Sandbox run failed with exit code {sandbox_exit}.{Colors.RESET}")
+            return sandbox_exit
+
+        # ==========================================================
+        # STEP 4: Review changes with agy, confirm, merge & cleanup
+        # ==========================================================
+        print(f"\n{Colors.CYAN}>>> [STEP 4/5] Reviewing changes and merging...{Colors.RESET}")
+        session_logger.log_event("coordinator", "review", "review_started")
+        try:
+            merged = review_and_merge(
+                worktree_name=worktree_name,
+                branch_name=branch_name,
+                base_branch=current_branch,
+                auto_approve=auto_approve,
+                interactive=not auto_approve,
+                repo_dir=target_repo,
+            )
+        except Exception as exc:
+            session_logger.finish("FAILED", error=f"Review and merge failed: {exc}")
+            print(f"{Colors.RED}[ERROR] Review and merge failed: {exc}{Colors.RESET}")
+            return 1
+
+        session_logger.log_event("coordinator", "review", "merge_decision", {"merged": merged})
+
+        # ==========================================================
+        # STEP 5: Confirm and push to remote
+        # ==========================================================
+        if merged:
+            print(f"\n{Colors.CYAN}>>> [STEP 5/5] Push changes to remote...{Colors.RESET}")
+            session_logger.log_event("coordinator", "push", "push_started")
+            pushed = push_changes(
+                branch_name=current_branch,
+                remote="origin",
+                auto_approve=auto_approve,
+                interactive=not auto_approve,
+                repo_dir=target_repo,
+            )
+            session_logger.log_event("coordinator", "push", "push_decision", {"pushed": bool(pushed)})
+        else:
+            print(f"\n{Colors.YELLOW}[INFO] Skipping push since changes were not merged into '{current_branch}'.{Colors.RESET}")
+            session_logger.log_event("coordinator", "push", "push_skipped", {"reason": "changes_not_merged"})
+
+    except KeyboardInterrupt:
+        session_logger.finish("ABORTED", error="Execution interrupted by user (Ctrl+C)")
+        raise
     except Exception as exc:
-        print(f"{Colors.RED}[ERROR] Review and merge failed: {exc}{Colors.RESET}")
-        return 1
+        session_logger.finish("FAILED", error=str(exc))
+        raise
 
-    # ==========================================================
-    # STEP 5: Confirm and push to remote
-    # ==========================================================
-    if merged:
-        print(f"\n{Colors.CYAN}>>> [STEP 5/5] Push changes to remote...{Colors.RESET}")
-        push_changes(
-            branch_name=current_branch,
-            remote="origin",
-            auto_approve=auto_approve,
-            interactive=not auto_approve,
-            repo_dir=target_repo,
-        )
-    else:
-        print(f"\n{Colors.YELLOW}[INFO] Skipping push since changes were not merged into '{current_branch}'.{Colors.RESET}")
-
+    session_logger.finish("COMPLETED", merged=merged, pushed=bool(pushed))
     print(f"\n{Colors.CYAN}=========================================================={Colors.RESET}")
     target_msg = f"Session '{session_slug}'" if is_session else f"Issue #{issue_number}"
     print(f"{Colors.GREEN}   {target_msg} Workflow Completed!               {Colors.RESET}")
+    print(f"{Colors.GRAY}   Logs: {session_logger.run_dir}{Colors.RESET}")
     print(f"{Colors.CYAN}=========================================================={Colors.RESET}")
     return 0
 

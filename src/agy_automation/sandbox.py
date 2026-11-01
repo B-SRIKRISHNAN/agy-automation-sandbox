@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from .config import Colors, find_agent_instructions, get_target_repo, get_toolkit_root
 from .engine import derive_container_names, detect_container_engine, resolve_compose_cmd
@@ -74,6 +74,55 @@ def ensure_gitconfig_sandbox(toolkit_root: Path) -> Path:
     return config_file
 
 
+def format_stream_event_for_display(parsed: Dict[str, Any]) -> Optional[str]:
+    """Format an agy NDJSON event into a concise, human-readable terminal line."""
+    evt = parsed.get("event")
+    if evt == "step_update":
+        su = parsed.get("step_update") or {}
+        stype = su.get("step_type")
+        if stype == "tool":
+            state = su.get("state")
+            tool_name = su.get("tool_name", "")
+            tinfo = su.get("tool_info") or {}
+            params = tinfo.get("parameters") or {}
+            if state == "ACTIVE":
+                if tool_name == "run_command":
+                    cmd = params.get("CommandLine", "")
+                    return f"{Colors.YELLOW}[TOOL CALL]{Colors.RESET} run_command: {cmd}"
+                elif tool_name in ("view_file", "write_to_file", "replace_file_content"):
+                    path = params.get("Path") or params.get("path") or ""
+                    return f"{Colors.YELLOW}[TOOL CALL]{Colors.RESET} {tool_name}: {path}"
+                else:
+                    return f"{Colors.YELLOW}[TOOL CALL]{Colors.RESET} {tool_name}"
+            elif state == "DONE":
+                out = tinfo.get("output", "")
+                dur = su.get("duration_seconds")
+                dur_str = f" ({dur:.2f}s)" if dur is not None else ""
+                if out:
+                    first_line = out.strip().splitlines()[0] if out.strip() else ""
+                    if len(first_line) > 100:
+                        first_line = first_line[:97] + "..."
+                    return f"{Colors.GRAY}[TOOL OUTPUT]{Colors.RESET} {first_line}{dur_str}"
+                return f"{Colors.GRAY}[TOOL DONE]{Colors.RESET}{dur_str}"
+        elif stype == "agent_response":
+            usage = su.get("usage") or {}
+            if usage:
+                in_tok = usage.get("input_tokens", 0)
+                out_tok = usage.get("output_tokens", 0)
+                tot_tok = usage.get("total_tokens", 0)
+                dur = su.get("duration_seconds")
+                dur_str = f" in {dur:.2f}s" if dur is not None else ""
+                return f"{Colors.CYAN}[STEP USAGE]{Colors.RESET} {tot_tok:,} tokens (in: {in_tok:,}, out: {out_tok:,}){dur_str}"
+    elif evt == "result":
+        res = parsed.get("result") or {}
+        usage = res.get("usage") or {}
+        tot_tok = usage.get("total_tokens", 0)
+        turns = res.get("num_turns", 0)
+        dur = res.get("duration_seconds", 0)
+        return f"{Colors.GREEN}[AGENT RESULT]{Colors.RESET} Completed in {dur:.1f}s ({turns} turns, {tot_tok:,} total tokens)"
+    return None
+
+
 def run_sandbox(
     worktree_name: str = "",
     issue_file: str = "",
@@ -82,6 +131,7 @@ def run_sandbox(
     build: bool = False,
     interactive: bool = False,
     container_engine: str = "auto",
+    session_logger: Optional[Any] = None,
 ) -> int:
     """Build and launch the container sandbox environment in automated or interactive mode."""
     toolkit_root = get_toolkit_root()
@@ -193,8 +243,53 @@ def run_sandbox(
             runner_args.append("--interactive")
 
         run_cmd = build_compose_invocation(runner_args)
-        run_res = subprocess.run(run_cmd, env=env)
-        exit_code = run_res.returncode
+
+        if session_logger:
+            session_logger.log_event("coordinator", "sandbox", "container_launching", {
+                "container_name": container_name,
+                "worktree": worktree_name,
+                "interactive": interactive,
+            })
+
+        if not interactive and session_logger:
+            try:
+                proc = subprocess.Popen(
+                    run_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    env=env,
+                )
+                if proc.stdout:
+                    for line in iter(proc.stdout.readline, ""):
+                        line_s = line.strip()
+                        if not line_s:
+                            continue
+                        if line_s.startswith("{") and line_s.endswith("}"):
+                            parsed = session_logger.log_raw_agent_event(line_s)
+                            if parsed:
+                                disp = format_stream_event_for_display(parsed)
+                                if disp:
+                                    print(disp)
+                        else:
+                            session_logger.log_event("container", "sandbox", "stdout", {"message": line_s})
+                            print(f"{Colors.GRAY}{line_s}{Colors.RESET}")
+
+                    proc.stdout.close()
+                proc.wait()
+                exit_code = proc.returncode
+            except KeyboardInterrupt:
+                print(f"\n{Colors.YELLOW}[ABORT] User cancelled execution. Terminating sandbox container...{Colors.RESET}")
+                session_logger.log_event("coordinator", "sandbox", "user_abort", {
+                    "reason": "Process cancelled by user (SIGINT/KeyboardInterrupt)"
+                })
+                if engine_bin:
+                    subprocess.run([engine_bin, "rm", "-f", container_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                raise
+        else:
+            run_res = subprocess.run(run_cmd, env=env)
+            exit_code = run_res.returncode
 
         # Post-run: repair worktree on host
         worktree_host_dir = target_repo / ".worktrees" / worktree_name
@@ -202,9 +297,18 @@ def run_sandbox(
             worktree_repair(target_repo, worktree_host_dir)
 
         if exit_code != 0:
+            if session_logger:
+                session_logger.log_event("container", "sandbox", "container_terminated", {
+                    "exit_code": exit_code,
+                    "reason": f"Agent container exited with error code {exit_code}",
+                })
             print(f"{Colors.RED}[ERROR] Agent container exited with error code {exit_code}.{Colors.RESET}")
             return exit_code
 
+        if session_logger:
+            session_logger.log_event("coordinator", "sandbox", "container_finished", {
+                "exit_code": 0
+            })
         print(f"{Colors.GREEN}[OK] Sandbox container session finished successfully.{Colors.RESET}")
         return 0
     else:
