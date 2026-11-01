@@ -15,7 +15,7 @@ class TestPipelineContext(unittest.TestCase):
         self.assertEqual(ctx.branch_name, "issue-101")
         self.assertEqual(ctx.base_branch, "master")
         self.assertEqual(ctx.engine, "auto")
-        self.assertEqual(ctx.interactive, True)
+        self.assertEqual(ctx.interactive, False)
         self.assertEqual(ctx.auto_approve, False)
         self.assertEqual(ctx.dry_run, False)
 

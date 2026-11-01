@@ -21,7 +21,7 @@ class PipelineContext:
     branch_name: str = ""
     worktree_path: Optional[Path] = None
     engine: str = "auto"
-    interactive: bool = True
+    interactive: bool = False
     auto_approve: bool = False
     dry_run: bool = False
     build: bool = False

@@ -13,6 +13,13 @@ class TestCliSubcommands(unittest.TestCase):
         self.assertEqual(ns.issue, 78)
         self.assertTrue(ns.build)
         self.assertEqual(ns.engine, "podman")
+        self.assertFalse(ns.interactive)
+
+    def test_start_subcommand_interactive_flag(self):
+        ns = parse_cli_args(["start", "78", "-i"])
+        self.assertEqual(ns.command, "start")
+        self.assertEqual(ns.issue, 78)
+        self.assertTrue(ns.interactive)
 
     def test_session_subcommand(self):
         ns = parse_cli_args(["session", "refactor-api", "--dry-run"])

@@ -21,7 +21,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "default_engine": "auto",
     "base_branch": "master",
     "auto_approve": False,
-    "interactive": True,
+    "interactive": False,
     "runs_dir": None,
     "build": False,
 }
