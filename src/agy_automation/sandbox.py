@@ -74,6 +74,12 @@ def ensure_gitconfig_sandbox(toolkit_root: Path) -> Path:
     return config_file
 
 
+def print_stream_line(text: str) -> None:
+    """Print a terminal line with an explicit carriage return and immediate flush."""
+    sys.stdout.write(f"\r{text}\n")
+    sys.stdout.flush()
+
+
 def format_stream_event_for_display(parsed: Dict[str, Any]) -> Optional[str]:
     """Format an agy NDJSON event into a concise, human-readable terminal line."""
     evt = parsed.get("event")
@@ -87,11 +93,19 @@ def format_stream_event_for_display(parsed: Dict[str, Any]) -> Optional[str]:
             params = tinfo.get("parameters") or {}
             if state == "ACTIVE":
                 if tool_name == "run_command":
-                    cmd = params.get("CommandLine", "")
+                    cmd = params.get("CommandLine") or params.get("command") or ""
                     return f"{Colors.YELLOW}[TOOL CALL]{Colors.RESET} run_command: {cmd}"
-                elif tool_name in ("view_file", "write_to_file", "replace_file_content"):
+                elif tool_name in ("view_file", "read_file", "write_to_file", "write_file", "replace_file_content", "edit_file"):
                     path = params.get("Path") or params.get("path") or ""
                     return f"{Colors.YELLOW}[TOOL CALL]{Colors.RESET} {tool_name}: {path}"
+                elif tool_name == "manage_task":
+                    action = params.get("Action") or params.get("action") or ""
+                    task_id = params.get("TaskId") or params.get("taskId") or ""
+                    task_suffix = f" {task_id}" if task_id else ""
+                    return f"{Colors.YELLOW}[TOOL CALL]{Colors.RESET} manage_task: {action}{task_suffix}" if action else f"{Colors.YELLOW}[TOOL CALL]{Colors.RESET} manage_task"
+                elif tool_name == "search_web":
+                    query = params.get("query") or ""
+                    return f"{Colors.YELLOW}[TOOL CALL]{Colors.RESET} search_web: {query}" if query else f"{Colors.YELLOW}[TOOL CALL]{Colors.RESET} search_web"
                 else:
                     return f"{Colors.YELLOW}[TOOL CALL]{Colors.RESET} {tool_name}"
             elif state == "DONE":
@@ -226,8 +240,10 @@ def run_sandbox(
         if not resolved_instr:
             _, resolved_instr = find_agent_instructions(target_repo)
 
-        runner_args = [
-            "run",
+        runner_args = ["run"]
+        if not interactive:
+            runner_args.append("-T")
+        runner_args.extend([
             "--rm",
             "-w",
             worktree_container_path,
@@ -236,7 +252,7 @@ def run_sandbox(
             "/runner/container-agent-runner.sh",
             worktree_name,
             issue_arg,
-        ]
+        ])
         if resolved_instr:
             runner_args.append(resolved_instr.replace("\\", "/"))
         if interactive:
@@ -255,6 +271,7 @@ def run_sandbox(
             try:
                 proc = subprocess.Popen(
                     run_cmd,
+                    stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
@@ -271,10 +288,10 @@ def run_sandbox(
                             if parsed:
                                 disp = format_stream_event_for_display(parsed)
                                 if disp:
-                                    print(disp)
+                                    print_stream_line(disp)
                         else:
                             session_logger.log_event("container", "sandbox", "stdout", {"message": line_s})
-                            print(f"{Colors.GRAY}{line_s}{Colors.RESET}")
+                            print_stream_line(f"{Colors.GRAY}{line_s}{Colors.RESET}")
 
                     proc.stdout.close()
                 proc.wait()
