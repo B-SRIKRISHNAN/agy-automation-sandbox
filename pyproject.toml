@@ -17,6 +17,19 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.28.0",
+    "pydantic>=2.6.0",
+    "sqlalchemy>=2.0.28",
+    "alembic>=1.13.1",
+]
+
+[project.optional-dependencies]
+test = [
+    "httpx>=0.27.0",
+    "pytest>=8.0.0",
+]
 
 [project.scripts]
 start-issue = "agy_automation.orchestrator:main"

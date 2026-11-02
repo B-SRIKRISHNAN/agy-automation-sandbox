@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from .config import Colors
 from .exceptions import GitHubCliNotFoundError, IssueNotFoundError
@@ -22,7 +22,10 @@ def verify_gh_installed() -> str:
     return gh_bin
 
 
-def fetch_issue_payload(issue_number: int) -> Dict[str, Any]:
+def fetch_issue_payload(
+    issue_number: int,
+    repo_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
     """Execute gh issue view and parse JSON response."""
     gh_bin = verify_gh_installed()
     cmd = [
@@ -34,7 +37,16 @@ def fetch_issue_payload(issue_number: int) -> Dict[str, Any]:
         "number,title,body,url,author,labels,comments",
     ]
 
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+    kwargs: Dict[str, Any] = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "encoding": "utf-8",
+    }
+    if repo_dir:
+        kwargs["cwd"] = str(repo_dir)
+
+    result = subprocess.run(cmd, **kwargs)
     if result.returncode != 0 or not result.stdout.strip():
         raise IssueNotFoundError(
             f"Failed to fetch issue #{issue_number} from GitHub. "
@@ -46,6 +58,100 @@ def fetch_issue_payload(issue_number: int) -> Dict[str, Any]:
         return data
     except Exception as exc:
         raise IssueNotFoundError(f"Failed to parse issue #{issue_number} JSON payload: {exc}") from exc
+
+
+def list_github_issues(
+    repo_dir: Optional[Path] = None,
+    state: str = "open",
+    limit: int = 30,
+) -> List[Dict[str, Any]]:
+    """List issues for a repository via gh issue list."""
+    gh_bin = verify_gh_installed()
+    cmd = [
+        gh_bin,
+        "issue",
+        "list",
+        "--state",
+        state,
+        "--limit",
+        str(limit),
+        "--json",
+        "number,title,state,author,labels,updatedAt,url,comments",
+    ]
+
+    kwargs: Dict[str, Any] = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "encoding": "utf-8",
+    }
+    if repo_dir:
+        kwargs["cwd"] = str(repo_dir)
+
+    result = subprocess.run(cmd, **kwargs)
+    if result.returncode != 0 or not result.stdout.strip():
+        return []
+
+    try:
+        data = json.loads(result.stdout)
+        if isinstance(data, list):
+            return data
+        return []
+    except Exception:
+        return []
+
+
+def get_issue_provider_status(repo_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """Check GitHub CLI installation, authentication, and remote origin availability."""
+    gh_bin = shutil.which("gh")
+    if not gh_bin:
+        return {
+            "available": False,
+            "gh_installed": False,
+            "authenticated": False,
+            "has_remote": False,
+            "remote_url": "",
+            "reason": "GitHub CLI (gh) is not installed on PATH",
+        }
+
+    # Check authentication status
+    auth_proc = subprocess.run(
+        [gh_bin, "auth", "status"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    is_authenticated = (auth_proc.returncode == 0)
+
+    # Check git remote origin
+    remote_url = ""
+    has_remote = False
+    if repo_dir and Path(repo_dir).exists():
+        rem_proc = subprocess.run(
+            ["git", "-C", str(repo_dir), "remote", "get-url", "origin"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if rem_proc.returncode == 0 and rem_proc.stdout.strip():
+            remote_url = rem_proc.stdout.strip()
+            has_remote = True
+
+    is_available = bool(gh_bin and is_authenticated and has_remote)
+    reason = None
+    if not is_authenticated:
+        reason = "GitHub CLI is not authenticated (run 'gh auth login')"
+    elif not has_remote:
+        reason = "Target repository has no 'origin' remote configured"
+
+    return {
+        "available": is_available,
+        "gh_installed": True,
+        "authenticated": is_authenticated,
+        "has_remote": has_remote,
+        "remote_url": remote_url,
+        "reason": reason,
+    }
 
 
 def build_markdown_context(issue_data: Dict[str, Any]) -> str:
@@ -96,13 +202,14 @@ def fetch_and_confirm_issue(
     auto_approve: bool = False,
     interactive: bool = True,
     prompt_handler: Optional[Callable[[str], bool]] = None,
+    repo_dir: Optional[Path] = None,
 ) -> Optional[Dict[str, Any]]:
     """Fetch issue, display preview, request confirmation, and optionally write output."""
     print(f"{Colors.CYAN}=========================================================={Colors.RESET}")
     print(f"{Colors.GREEN}   Fetching GitHub Issue #{issue_number}                    {Colors.RESET}")
     print(f"{Colors.CYAN}=========================================================={Colors.RESET}")
 
-    issue_data = fetch_issue_payload(issue_number)
+    issue_data = fetch_issue_payload(issue_number, repo_dir=repo_dir)
     num = issue_data.get("number", issue_number)
     title = issue_data.get("title", "")
     url = issue_data.get("url", "")

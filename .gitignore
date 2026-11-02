@@ -5,11 +5,20 @@ ISSUE_CONTEXT.md
 m2_home/
 m2_repo/
 
-# Python bytecode & cache
+# Python bytecode, environments & cache
 __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+.venv/
+*.egg-info/
+
+# Local databases & environment files
+*.db
+*.sqlite
+*.sqlite3
+.env
+.env.*
 
 # OS / Editor files
 .DS_Store

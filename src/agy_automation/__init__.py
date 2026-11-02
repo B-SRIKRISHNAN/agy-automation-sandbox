@@ -43,6 +43,8 @@ from .core.fetch_issue import (
     build_markdown_context,
     fetch_and_confirm_issue,
     fetch_issue_payload,
+    get_issue_provider_status,
+    list_github_issues,
 )
 from .core.generate_issue import (
     generate_issue_statement,
@@ -123,6 +125,8 @@ __all__ = [
     "extract_issue_number_from_url",
     "fetch_and_confirm_issue",
     "fetch_issue_payload",
+    "get_issue_provider_status",
+    "list_github_issues",
     "find_agent_instructions",
     "format_merge_message",
     "format_stream_event_for_display",
