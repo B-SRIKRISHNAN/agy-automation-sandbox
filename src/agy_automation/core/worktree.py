@@ -32,7 +32,7 @@ def create_worktree(
         repo_dir = get_target_repo()
 
     prune_worktrees(repo_dir)
-    configure_relative_paths(repo_dir)
+    # configure_relative_paths(repo_dir) is deprecated: dot_git is normalized directly below
 
     active_branch = get_current_branch(repo_dir)
     if not base_branch:

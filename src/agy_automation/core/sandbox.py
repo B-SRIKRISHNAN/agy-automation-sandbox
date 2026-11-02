@@ -63,9 +63,6 @@ def ensure_gitconfig_sandbox(toolkit_root: Path) -> Path:
     preloadindex = true
     fscache = true
     untrackedCache = true
-
-[worktree]
-    useRelativePaths = true
 """
     with open(config_file, "w", encoding="utf-8", newline="\n") as f:
         f.write(content)

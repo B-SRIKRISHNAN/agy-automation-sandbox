@@ -32,11 +32,7 @@ if [ -f "$WORKTREE_DIR/.git" ]; then
     echo "gitdir: ../../.git/worktrees/$WORKTREE_NAME" > "$WORKTREE_DIR/.git"
 fi
 
-# Repair worktree paths for Linux environment
-git worktree repair 2>/dev/null || true
-
 cd "$WORKTREE_DIR"
-git worktree repair 2>/dev/null || true
 
 echo "[INFO] Working directory: $(pwd)"
 echo "[INFO] Current Git branch: $(git branch --show-current)"

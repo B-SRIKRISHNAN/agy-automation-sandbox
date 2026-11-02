@@ -55,8 +55,18 @@ def prune_worktrees(repo_dir: Path) -> None:
 
 
 def configure_relative_paths(repo_dir: Path) -> None:
-    """Configure git to use relative paths for worktrees for cross-OS container portability."""
-    run_git(["config", "worktree.useRelativePaths", "true"], cwd=repo_dir)
+    """[DEPRECATED / NO-OP] Formerly configured 'worktree.useRelativePaths true'.
+
+    Deprecated because Git 2.44+ (running in container environments) activates the
+    'relativeWorktrees' repository format extension when this setting is enabled,
+    causing Git <=2.43 on host machines to abort with:
+        'fatal: unknown repository extension found: relativeworktrees'
+
+    Worktree relative path portability is handled directly by writing
+    'gitdir: ../../.git/worktrees/<name>' into the worktree .git file in core/worktree.py.
+    """
+    # Safe no-op to preserve function signature and backward compatibility.
+    pass
 
 
 def worktree_repair(repo_dir: Path, worktree_path: Optional[Path] = None) -> None:
