@@ -154,6 +154,8 @@ class RunSession:
         container_name: Optional[str] = None,
         issue_title: Optional[str] = None,
         issue_url: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> None:
         """Update metadata context and persist immediately."""
         if repo_path:
@@ -178,6 +180,10 @@ class RunSession:
             self.metadata["context"]["issue_title"] = str(issue_title)
         if issue_url:
             self.metadata["context"]["issue_url"] = str(issue_url)
+        if conversation_id:
+            self.metadata["context"]["conversation_id"] = str(conversation_id)
+        for k, v in kwargs.items():
+            self.metadata["context"][k] = v
 
         self._write_metadata()
 

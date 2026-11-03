@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agy_automation.api.common.database import run_db_migrations
 from agy_automation.api.modules.projects.router import router as projects_router
+from agy_automation.api.modules.runs.router import router as runs_router
 from agy_automation.core.logging import configure_logging, get_logger
 
 logger = get_logger("agy_automation.api")
@@ -66,6 +67,7 @@ def create_app() -> FastAPI:
 
     # 4. Mount Feature Routers
     app.include_router(projects_router, prefix="/api")
+    app.include_router(runs_router, prefix="/api")
 
     return app
 

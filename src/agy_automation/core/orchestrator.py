@@ -37,6 +37,11 @@ def run_pipeline(
     """Execute the end-to-end autonomous issue-resolution or session lifecycle."""
     toolkit_root = get_toolkit_root()
 
+    approval_callback = None
+    stream_callback = None
+    run_id = None
+    conversation_id = None
+
     if context is not None:
         target_repo = context.target_repo
         engine = context.engine
@@ -44,6 +49,10 @@ def run_pipeline(
         dry_run = context.dry_run
         auto_approve = context.auto_approve
         interactive = context.interactive
+        approval_callback = context.approval_callback
+        stream_callback = context.stream_callback
+        run_id = context.run_id
+        conversation_id = context.conversation_id
         if context.target_type == "session":
             session_name = str(context.target_id)
             issue_number = 0
@@ -117,7 +126,7 @@ def run_pipeline(
 
     # Initialize RunSession for isolated, OS-agnostic logging
     session_target = session_slug if is_session else str(issue_number)
-    session_logger = RunSession(project_name=target_repo.name, target=session_target)
+    session_logger = RunSession(project_name=target_repo.name, target=session_target, run_id=run_id)
     session_logger.update_context(
         repo_path=str(target_repo),
         base_branch=current_branch,
@@ -126,7 +135,12 @@ def run_pipeline(
         worktree_path=str(worktree_path),
         engine=engine_desc,
         container_name=f"{target_repo.name}-sandbox",
+        run_id=run_id,
+        conversation_id=conversation_id,
     )
+    if context is not None:
+        context.session_logger = session_logger
+
     session_logger.log_event("coordinator", "init", "pipeline_initialized", {
         "mode": "session" if is_session else "issue",
         "target": session_target,
@@ -134,6 +148,8 @@ def run_pipeline(
         "branch_name": branch_name,
         "worktree": worktree_name,
         "engine": engine_desc,
+        "run_id": run_id,
+        "conversation_id": conversation_id,
     })
 
     if is_session:
@@ -267,6 +283,7 @@ Execute tasks, queries, code modifications, and tests inside this protected cont
             interactive=interactive_sandbox,
             container_engine=engine,
             session_logger=session_logger,
+            stream_callback=stream_callback,
         )
         if sandbox_exit != 0:
             session_logger.finish("FAILED", error=f"Sandbox run failed with exit code {sandbox_exit}")
@@ -287,6 +304,7 @@ Execute tasks, queries, code modifications, and tests inside this protected cont
                 interactive=not auto_approve,
                 repo_dir=target_repo,
                 session_logger=session_logger,
+                approval_callback=approval_callback,
             )
         except Exception as exc:
             session_logger.finish("FAILED", error=f"Review and merge failed: {exc}")

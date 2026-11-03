@@ -5,8 +5,15 @@ and providing a consistent context across CLI, API, and TUI frontends.
 """
 
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
+
+
+class CallerMode(str, Enum):
+    """Execution caller context indicating the interface driving the pipeline."""
+    CLI = "cli"
+    API = "api"
 
 
 @dataclass
@@ -29,6 +36,13 @@ class PipelineContext:
     instructions_file: Optional[Path] = None
     session_logger: Optional[Any] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    # Caller Inversion & Observability Hooks
+    caller_mode: CallerMode = CallerMode.CLI
+    run_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    approval_callback: Optional[Callable[[], bool]] = None
+    stream_callback: Optional[Callable[[str], None]] = None
 
     def __post_init__(self) -> None:
         if isinstance(self.target_repo, str):
@@ -76,5 +90,8 @@ class PipelineContext:
             "build": self.build,
             "new_issue_prompt": self.new_issue_prompt,
             "instructions_file": str(self.instructions_file) if self.instructions_file else None,
+            "caller_mode": str(self.caller_mode),
+            "run_id": self.run_id,
+            "conversation_id": self.conversation_id,
             "metadata": self.metadata,
         }

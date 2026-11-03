@@ -75,8 +75,18 @@ flowchart TD
 | :--- | :--- | :--- | :--- |
 | **Core Domain** | `src/agy_automation/core/` | Worktree management, container lifecycle, agent runners, telemetry logging, issue fetching & listing (`fetch_issue.py`), git review/merge. | **NO** web framework dependencies (no FastAPI/Starlette). **NO** CLI parsing. Pure Python & standard library. Functions accept optional `repo_dir` for API scoping while defaulting to `None` for CLI compatibility. |
 | **CLI Adapter** | `src/agy_automation/cli/` | Terminal argument parsing, PowerShell syntax normalization (`-Flag:Val`), interactive prompts. | Interacts exclusively with `core/` functions and dataclasses. Does not directly query the database. |
-| **API Adapter** | `src/agy_automation/api/` | REST API, OpenAPI docs, Pydantic validation, CORS, request timing, lifespan database migrations. | Mounts vertical feature slices (`projects/` with `issues/` sub-module). Injects database sessions via dependencies. Never executes shell commands directly without calling `core/`. |
-| **Database & Migrations** | `src/agy_automation/api/common/` & `api/migrations/` | SQLAlchemy 2.0 ORM, Alembic schema migrations, connection pooling. | All schema changes are tracked in versioned migration files with `render_as_batch=True`. |
+| **API Adapter** | `src/agy_automation/api/` | REST API, OpenAPI docs, Pydantic validation, CORS, request timing, lifespan database migrations. | Mounts vertical feature slices (`projects/` with `issues/` sub-module, `runs/` engine). Injects database sessions via dependencies. Coordinates background execution using `CallerMode.API`. |
+| **Database & Migrations** | `src/agy_automation/api/common/` & `api/migrations/` | SQLAlchemy 2.0 ORM, Alembic schema migrations, connection pooling. | All schema changes are tracked in versioned migration files with `render_as_batch=True`. Tables: `projects`, `runs`. |
+
+---
+
+### 5. Caller Inversion Pattern (`CallerMode`)
+The master 5-step pipeline coordinator (`core/orchestrator.py:run_pipeline()`) remains the single source of truth for execution order:
+1. `Context` $\rightarrow$ 2. `Worktree` $\rightarrow$ 3. `Sandbox` $\rightarrow$ 4. `Review` $\rightarrow$ 5. `Push`.
+
+Callers specify their execution nature via `PipelineContext(caller_mode=CallerMode.CLI | CallerMode.API)`:
+* **CLI Mode**: Interactive terminal prompts (`input()`), standard error/output colors.
+* **API Mode**: Background worker thread coordinates via `RunManager`, emitting `awaiting_review` SSE events and waiting on an in-memory event until `PUT /api/runs/{id}/review` is submitted (or resuming directly from SQLite and git worktree if interrupted).
 
 ---
 
@@ -93,11 +103,19 @@ src/agy_automation/api/modules/<feature>/
 ├── service.py      # Business logic & external validations
 ├── router.py       # FastAPI HTTP endpoints / Controllers
 │
-└── <sub_feature>/  # Example: projects/issues/ (Subordinate resource)
+├── <sub_feature>/  # Example: projects/issues/ (Subordinate resource)
+│   ├── __init__.py
+│   ├── schemas.py  # Sub-resource Pydantic schemas
+│   ├── service.py  # Domain coordination with core functions
+│   └── router.py   # Sub-router mounted onto parent router
+│
+└── runs/           # Autonomous and interactive runs execution engine
     ├── __init__.py
-    ├── schemas.py  # Sub-resource Pydantic schemas
-    ├── service.py  # Domain coordination with core functions
-    └── router.py   # Sub-router mounted onto parent router
+    ├── models.py   # Run entity (status, timings, conversation_id)
+    ├── schemas.py  # RunCreateRequest, RunReviewRequest, RunDiffResponse
+    ├── repository.py # Runs queries & status updates
+    ├── service.py  # Background worker & in-memory RunManager coordination
+    └── router.py   # Endpoints (/api/runs, /diff, /review, /stream SSE)
 ```
 
 ### 2. Mirrored 5-Layer Test Suite

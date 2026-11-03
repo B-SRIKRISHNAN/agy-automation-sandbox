@@ -1,0 +1,348 @@
+"""Service and in-memory lifecycle manager for Runs."""
+
+import threading
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List, Optional
+
+from fastapi import HTTPException, status
+from sqlalchemy.orm import Session
+
+from agy_automation.api.common.database import SessionLocal
+from agy_automation.api.modules.projects import repository as projects_repo
+from agy_automation.api.modules.runs import repository as runs_repo
+from agy_automation.api.modules.runs.models import Run
+from agy_automation.api.modules.runs.schemas import (
+    RunCreateRequest,
+    RunDiffResponse,
+    RunReviewRequest,
+    RunReviewResponse,
+    RunStatus,
+)
+from agy_automation.core.context import CallerMode, PipelineContext
+from agy_automation.core.logging import get_logger
+from agy_automation.core.orchestrator import run_pipeline
+from agy_automation.core.push import push_changes
+from agy_automation.core.review_merge import prepare_review_data, review_and_merge
+
+logger = get_logger("agy_automation.api.runs.service")
+
+
+class RunManager:
+    """Thread-safe coordination manager for active background runs."""
+
+    def __init__(self) -> None:
+        self._events: Dict[str, threading.Event] = {}
+        self._decisions: Dict[str, bool] = {}
+        self._push_decisions: Dict[str, bool] = {}
+        self._lock = threading.Lock()
+
+    def register_run(self, run_id: str) -> None:
+        """Register a new run with an unresolved decision event."""
+        with self._lock:
+            self._events[run_id] = threading.Event()
+            self._decisions[run_id] = False
+            self._push_decisions[run_id] = False
+
+    def is_waiting(self, run_id: str) -> bool:
+        """Check if an active thread is registered and awaiting review for run_id."""
+        with self._lock:
+            return run_id in self._events and not self._events[run_id].is_set()
+
+    def wait_for_decision(self, run_id: str, timeout: float = 1800.0) -> bool:
+        """Pause current worker thread until review decision is submitted or timeout expires."""
+        event = None
+        with self._lock:
+            event = self._events.get(run_id)
+
+        if event is None:
+            logger.warning("No event found for run %s. Defaulting decision to False.", run_id)
+            return False
+
+        logger.info("Worker thread for run %s pausing at review gate (timeout=%ss)...", run_id, timeout)
+        received = event.wait(timeout=timeout)
+        if not received:
+            logger.warning("Run %s timed out waiting for review decision.", run_id)
+            return False
+
+        with self._lock:
+            return self._decisions.get(run_id, False)
+
+    def resolve_decision(self, run_id: str, approved: bool, push: bool = False) -> bool:
+        """Resolve the review decision, unblocking any waiting worker thread."""
+        with self._lock:
+            event = self._events.get(run_id)
+            if not event:
+                return False
+            self._decisions[run_id] = approved
+            self._push_decisions[run_id] = push
+            event.set()
+            return True
+
+    def get_push_decision(self, run_id: str) -> bool:
+        """Return whether user opted to push merged changes."""
+        with self._lock:
+            return self._push_decisions.get(run_id, False)
+
+    def cleanup_run(self, run_id: str) -> None:
+        """Remove in-memory tracking for a completed run."""
+        with self._lock:
+            self._events.pop(run_id, None)
+            self._decisions.pop(run_id, None)
+            self._push_decisions.pop(run_id, None)
+
+
+# Global process singleton
+run_manager = RunManager()
+
+
+def generate_run_id() -> str:
+    """Generate unique run identifier."""
+    now_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    rand_suffix = uuid.uuid4().hex[:6]
+    return f"run_{now_str}_{rand_suffix}"
+
+
+def start_run(db: Session, request: RunCreateRequest) -> Run:
+    """Initiate an automated run in the background."""
+    if request.project_id:
+        project = projects_repo.get_by_id(db, request.project_id)
+    else:
+        project = projects_repo.get_active(db)
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No active project found. Please register and select a project first.",
+        )
+
+    run_id = generate_run_id()
+    run = Run(
+        id=run_id,
+        project_id=project.id,
+        target_type=request.target_type,
+        target_id=request.target_id,
+        status=RunStatus.QUEUED.value,
+        base_branch=project.git_branch or "master",
+        auto_approve=request.auto_approve,
+        engine=request.engine,
+        conversation_id=request.conversation_id,
+    )
+    run = runs_repo.create(db, run)
+    run_manager.register_run(run_id)
+
+    def _worker() -> None:
+        worker_db = SessionLocal()
+        try:
+            runs_repo.update_status(worker_db, run_id, RunStatus.RUNNING.value)
+
+            def _approval_hook() -> bool:
+                # Callback invoked from Step 4 inside run_pipeline
+                log_dir_str = str(context.session_logger.run_dir) if context.session_logger else None
+                runs_repo.update_details(
+                    worker_db,
+                    run_id,
+                    worktree_name=context.worktree_name,
+                    branch_name=context.branch_name,
+                    base_branch=context.base_branch,
+                    log_dir=log_dir_str,
+                    conversation_id=context.conversation_id,
+                )
+                runs_repo.update_status(worker_db, run_id, RunStatus.AWAITING_REVIEW.value)
+                return run_manager.wait_for_decision(run_id)
+
+            context = PipelineContext(
+                target_repo=Path(project.path),
+                target_type=request.target_type,
+                target_id=request.target_id,
+                base_branch=project.git_branch or "master",
+                engine=request.engine,
+                auto_approve=request.auto_approve,
+                caller_mode=CallerMode.API,
+                run_id=run_id,
+                conversation_id=request.conversation_id,
+                approval_callback=_approval_hook,
+            )
+
+            exit_code = run_pipeline(context=context)
+
+            log_dir_str = str(context.session_logger.run_dir) if context.session_logger else None
+            runs_repo.update_details(
+                worker_db,
+                run_id,
+                worktree_name=context.worktree_name,
+                branch_name=context.branch_name,
+                base_branch=context.base_branch,
+                log_dir=log_dir_str,
+            )
+
+            if exit_code == 0:
+                runs_repo.update_status(worker_db, run_id, RunStatus.COMPLETED.value, finished=True)
+            else:
+                err_msg = f"Pipeline execution failed with exit code {exit_code}"
+                runs_repo.update_status(worker_db, run_id, RunStatus.FAILED.value, error_message=err_msg, finished=True)
+
+        except Exception as exc:
+            logger.exception("Background execution failed for run %s: %s", run_id, exc)
+            runs_repo.update_status(
+                worker_db,
+                run_id,
+                RunStatus.FAILED.value,
+                error_message=str(exc),
+                finished=True,
+            )
+        finally:
+            run_manager.cleanup_run(run_id)
+            worker_db.close()
+
+    thread = threading.Thread(target=_worker, daemon=True, name=f"run-worker-{run_id}")
+    thread.start()
+
+    return run
+
+
+def get_run(db: Session, run_id: str) -> Run:
+    """Retrieve run record by ID or raise 404."""
+    run = runs_repo.get_by_id(db, run_id)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run '{run_id}' not found.",
+        )
+    return run
+
+
+def list_runs(
+    db: Session,
+    project_id: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    limit: int = 50,
+) -> List[Run]:
+    """List runs for active or specified project."""
+    if not project_id:
+        active = projects_repo.get_active(db)
+        if active:
+            project_id = active.id
+
+    return runs_repo.list_by_project(db, project_id=project_id, status=status_filter, limit=limit)
+
+
+def get_run_diff(db: Session, run_id: str) -> RunDiffResponse:
+    """Inspect git diff for a run worktree."""
+    run = get_run(db, run_id)
+    project = projects_repo.get_by_id(db, run.project_id)
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Associated project not found.")
+
+    if not run.worktree_name or not run.branch_name:
+        return RunDiffResponse(
+            run_id=run.id,
+            worktree_name=run.worktree_name,
+            branch_name=run.branch_name,
+            base_branch=run.base_branch,
+            diff_stat="",
+            diff_snippet="",
+            commits=[],
+        )
+
+    try:
+        review_data = prepare_review_data(
+            worktree_name=run.worktree_name,
+            branch_name=run.branch_name,
+            base_branch=run.base_branch,
+            repo_dir=Path(project.path),
+        )
+        return RunDiffResponse(
+            run_id=run.id,
+            worktree_name=run.worktree_name,
+            branch_name=run.branch_name,
+            base_branch=run.base_branch,
+            diff_stat=review_data.get("diff_stat", ""),
+            diff_snippet=review_data.get("diff_snippet", ""),
+            commits=review_data.get("commits", []),
+        )
+    except Exception as exc:
+        logger.error("Failed to prepare diff for run %s: %s", run_id, exc)
+        return RunDiffResponse(
+            run_id=run.id,
+            worktree_name=run.worktree_name,
+            branch_name=run.branch_name,
+            base_branch=run.base_branch,
+            diff_stat="",
+            diff_snippet=f"Diff generation failed: {exc}",
+            commits=[],
+        )
+
+
+def submit_review(db: Session, run_id: str, request: RunReviewRequest) -> RunReviewResponse:
+    """Submit approval or rejection for a run awaiting review."""
+    run = get_run(db, run_id)
+    if run.status != RunStatus.AWAITING_REVIEW.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Run '{run_id}' is not awaiting review (current status: {run.status}).",
+        )
+
+    project = projects_repo.get_by_id(db, run.project_id)
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Associated project not found.")
+
+    # 1. Active Worker Path: unblock the waiting thread
+    if run_manager.is_waiting(run_id):
+        run_manager.resolve_decision(run_id, approved=request.approved, push=request.push)
+        return RunReviewResponse(
+            run_id=run_id,
+            status="PROCESSING",
+            merged=request.approved,
+            pushed=request.push,
+            message="Decision submitted to active background worker.",
+        )
+
+    # 2. Resumption Path: worker exited or server rebooted
+    if not request.approved:
+        runs_repo.update_status(db, run_id, RunStatus.ABORTED.value, finished=True)
+        return RunReviewResponse(
+            run_id=run_id,
+            status=RunStatus.ABORTED.value,
+            merged=False,
+            pushed=False,
+            message="Run review rejected and marked ABORTED.",
+        )
+
+    merged = False
+    pushed = False
+    try:
+        merged = review_and_merge(
+            worktree_name=run.worktree_name or "",
+            branch_name=run.branch_name or "",
+            base_branch=run.base_branch,
+            auto_approve=True,
+            interactive=False,
+            repo_dir=Path(project.path),
+        )
+        if merged and request.push:
+            pushed = bool(
+                push_changes(
+                    branch_name=run.base_branch,
+                    auto_approve=True,
+                    interactive=False,
+                    repo_dir=Path(project.path),
+                )
+            )
+        runs_repo.update_status(db, run_id, RunStatus.COMPLETED.value, finished=True)
+    except Exception as exc:
+        logger.exception("Resumed merge failed for run %s: %s", run_id, exc)
+        runs_repo.update_status(db, run_id, RunStatus.FAILED.value, error_message=str(exc), finished=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to merge and finalize run: {exc}",
+        )
+
+    return RunReviewResponse(
+        run_id=run_id,
+        status=RunStatus.COMPLETED.value,
+        merged=merged,
+        pushed=pushed,
+        message="Run merged and finalized successfully from persisted state.",
+    )
