@@ -21,15 +21,39 @@ def verify_agy_installed() -> str:
     return agy_bin
 
 
-def derive_container_names(target_repo: Path) -> Tuple[str, str]:
-    """Derive container and image name from target project directory."""
+def derive_container_names(target_repo: Path, worktree_name: str = "") -> Tuple[str, str]:
+    """Derive container and image name from target project directory and optional worktree.
+
+    Container name:
+        agy-sandbox-{project_name}-{worktree_name} if worktree_name is provided,
+        else agy-sandbox-{project_name}.
+
+    Image name:
+        agy-sandbox-{project_name}:latest if the project defines a custom .agy/Dockerfile.sandbox,
+        else agy-sandbox:latest (common shared base image).
+    """
     normalized = str(target_repo).replace("\\", "/").rstrip("/")
     leaf_name = normalized.split("/")[-1] if "/" in normalized else normalized
-    clean_name = re.sub(r"[^a-z0-9_-]", "-", leaf_name.lower()).strip("-")
-    if not clean_name:
-        clean_name = "project"
-    container_name = f"{clean_name}-sandbox"
-    image_name = f"{clean_name}-sandbox:latest"
+    clean_project = re.sub(r"[^a-z0-9_-]", "-", leaf_name.lower()).strip("-")
+    if not clean_project:
+        clean_project = "project"
+
+    clean_worktree = ""
+    if worktree_name:
+        clean_worktree = re.sub(r"[^a-z0-9_-]", "-", worktree_name.lower()).strip("-")
+
+    if clean_worktree:
+        container_name = f"agy-sandbox-{clean_project}-{clean_worktree}"
+    else:
+        container_name = f"agy-sandbox-{clean_project}"
+
+    # Check for optional project-specific Dockerfile override
+    custom_dockerfile = target_repo / ".agy" / "Dockerfile.sandbox"
+    if custom_dockerfile.is_file():
+        image_name = f"agy-sandbox-{clean_project}:latest"
+    else:
+        image_name = "agy-sandbox:latest"
+
     return container_name, image_name
 
 

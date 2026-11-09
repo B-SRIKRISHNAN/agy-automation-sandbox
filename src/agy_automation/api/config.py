@@ -15,6 +15,6 @@ def get_default_db_url() -> str:
     return f"sqlite:///{db_path}"
 
 
-HOST = os.environ.get("AGY_API_HOST", "127.0.0.1")
+HOST = os.environ.get("AGY_API_HOST", "0.0.0.0")
 PORT = int(os.environ.get("AGY_API_PORT", "8000"))
 DATABASE_URL = get_default_db_url()

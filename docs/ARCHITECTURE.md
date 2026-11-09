@@ -114,8 +114,8 @@ src/agy_automation/api/modules/<feature>/
     ├── models.py   # Run entity (status, timings, conversation_id)
     ├── schemas.py  # RunCreateRequest, RunReviewRequest, RunDiffResponse
     ├── repository.py # Runs queries & status updates
-    ├── service.py  # Background worker & in-memory RunManager coordination
-    └── router.py   # Endpoints (/api/runs, /diff, /review, /stream SSE)
+    ├── service.py  # Background worker & in-memory RunManager coordination (with abort handling)
+    └── router.py   # Endpoints (/api/runs, /abort, /diff, /review, /stream SSE)
 ```
 
 ### 2. Mirrored 5-Layer Test Suite

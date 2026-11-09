@@ -1,5 +1,6 @@
 """Tests for Runs service and coordination layer."""
 
+import subprocess
 from unittest.mock import MagicMock, patch
 from fastapi import HTTPException
 
@@ -54,6 +55,9 @@ class TestRunService(InMemoryDatabaseTestCase):
         self.assertEqual(run.target_id, "42")
         self.assertEqual(run.status, RunStatus.QUEUED.value)
         self.assertEqual(run.conversation_id, "conv-123")
+        self.assertEqual(run.worktree_name, "worktree-issue-42")
+        self.assertEqual(run.branch_name, "issue-42")
+        self.assertEqual(run.container_name, "agy-sandbox-service-repo-worktree-issue-42")
         mock_thread.start.assert_called_once()
 
     def test_run_manager_coordination_lifecycle(self):
@@ -188,3 +192,60 @@ class TestRunService(InMemoryDatabaseTestCase):
         diff_resp = service.get_run_diff(self.db, "run-diff-test")
         self.assertEqual(diff_resp.diff_stat, "1 file changed, 5 insertions(+)")
         self.assertEqual(len(diff_resp.commits), 1)
+
+    def test_abort_run_not_found_raises_404(self):
+        with self.assertRaises(HTTPException) as ctx:
+            service.abort_run(self.db, "missing-abort-run")
+        self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_abort_run_active_marks_aborted(self):
+        run = Run(
+            id="run-to-abort",
+            project_id=self.project.id,
+            target_type="issue",
+            target_id="15",
+            status=RunStatus.RUNNING.value,
+        )
+        runs_repo.create(self.db, run)
+        service.run_manager.register_run("run-to-abort")
+
+        aborted = service.abort_run(self.db, "run-to-abort")
+        self.assertEqual(aborted.status, RunStatus.ABORTED.value)
+        self.assertIn("Aborted by user", aborted.error_message)
+        self.assertTrue(service.run_manager.is_aborted("run-to-abort"))
+
+    @patch("subprocess.run")
+    @patch("shutil.which")
+    def test_abort_run_terminates_specific_container(self, mock_which, mock_subproc):
+        mock_which.side_effect = lambda cmd: f"/usr/bin/{cmd}" if cmd == "docker" else None
+        run = Run(
+            id="run-container-abort",
+            project_id=self.project.id,
+            target_type="issue",
+            target_id="15",
+            container_name="agy-sandbox-service-repo-worktree-issue-15",
+            status=RunStatus.RUNNING.value,
+        )
+        runs_repo.create(self.db, run)
+        service.run_manager.register_run("run-container-abort")
+
+        service.abort_run(self.db, "run-container-abort")
+        mock_subproc.assert_called_with(
+            ["/usr/bin/docker", "rm", "-f", "agy-sandbox-service-repo-worktree-issue-15"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+
+    def test_abort_run_idempotent_on_completed(self):
+        run = Run(
+            id="run-already-completed",
+            project_id=self.project.id,
+            target_type="issue",
+            target_id="16",
+            status=RunStatus.COMPLETED.value,
+        )
+        runs_repo.create(self.db, run)
+
+        result = service.abort_run(self.db, "run-already-completed")
+        self.assertEqual(result.status, RunStatus.COMPLETED.value)

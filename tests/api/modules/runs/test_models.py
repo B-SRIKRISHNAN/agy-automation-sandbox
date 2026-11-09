@@ -43,6 +43,7 @@ class TestRunModel(InMemoryDatabaseTestCase):
         self.assertFalse(run.auto_approve)
         self.assertEqual(run.engine, "auto")
         self.assertIsNone(run.worktree_name)
+        self.assertIsNone(run.container_name)
         self.assertIsNone(run.branch_name)
         self.assertIsNone(run.conversation_id)
         self.assertIsNone(run.finished_at)

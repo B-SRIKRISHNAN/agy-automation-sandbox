@@ -72,8 +72,9 @@ def update_details(
     base_branch: Optional[str] = None,
     log_dir: Optional[str] = None,
     conversation_id: Optional[str] = None,
+    container_name: Optional[str] = None,
 ) -> Optional[Run]:
-    """Update git and logging metadata associated with the run."""
+    """Update git, container, and logging metadata associated with the run."""
     run = get_by_id(db, run_id)
     if not run:
         return None
@@ -87,6 +88,8 @@ def update_details(
         run.log_dir = log_dir
     if conversation_id is not None:
         run.conversation_id = conversation_id
+    if container_name is not None:
+        run.container_name = container_name
     run.updated_at = utc_now()
     db.commit()
     db.refresh(run)

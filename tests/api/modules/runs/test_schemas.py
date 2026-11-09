@@ -52,6 +52,7 @@ class TestRunSchemas(unittest.TestCase):
         data = resp.model_dump()
         self.assertEqual(data["id"], "run-1")
         self.assertEqual(data["status"], "RUNNING")
+        self.assertIsNone(data["container_name"])
         self.assertFalse(data["auto_approve"])
 
     def test_run_list_response(self):

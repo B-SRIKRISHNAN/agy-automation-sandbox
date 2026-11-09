@@ -150,7 +150,7 @@ def run_sandbox(
     if target_repo is None:
         target_repo = get_target_repo()
 
-    container_name, image_name = derive_container_names(target_repo)
+    container_name, image_name = derive_container_names(target_repo, worktree_name=worktree_name or "")
     engine_type, engine_desc = detect_container_engine(container_engine)
     compose_base = resolve_compose_cmd(engine_type)
 
@@ -172,6 +172,9 @@ def run_sandbox(
     env["TARGET_REPO"] = str(target_repo)
     env["SANDBOX_CONTAINER"] = container_name
     env["SANDBOX_IMAGE"] = image_name
+    custom_dockerfile = target_repo / ".agy" / "Dockerfile.sandbox"
+    if custom_dockerfile.is_file():
+        env["SANDBOX_DOCKERFILE"] = str(custom_dockerfile)
     env["GEMINI_PATH"] = str(gemini_path).replace("\\", "/")
     env["CONTAINER_ENGINE"] = engine_type
 
@@ -241,6 +244,8 @@ def run_sandbox(
         if not interactive:
             runner_args.append("-T")
         runner_args.extend([
+            "--name",
+            container_name,
             "--rm",
             "-w",
             worktree_container_path,
@@ -336,7 +341,7 @@ def run_sandbox(
         print(f"{Colors.GRAY}----------------------------------------------------------\n{Colors.RESET}")
 
         print(f"{Colors.CYAN}[INFO] Entering sandbox container shell (exit or Ctrl+D to leave)...{Colors.RESET}")
-        run_cmd = build_compose_invocation(["run", "--rm", "sandbox", "bash"])
+        run_cmd = build_compose_invocation(["run", "--name", container_name, "--rm", "sandbox", "bash"])
         run_res = subprocess.run(run_cmd, env=env)
         return run_res.returncode
 

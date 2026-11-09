@@ -26,7 +26,8 @@ logger = get_logger("agy_automation.api.runs.router")
 router = APIRouter(prefix="/runs", tags=["runs"])
 
 
-@router.post("/", response_model=RunResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=RunResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=RunResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 def trigger_run(
     request: RunCreateRequest,
     db: Session = Depends(get_db),
@@ -36,7 +37,8 @@ def trigger_run(
     return RunResponse.model_validate(run)
 
 
-@router.get("/", response_model=RunListResponse)
+@router.get("", response_model=RunListResponse)
+@router.get("/", response_model=RunListResponse, include_in_schema=False)
 def list_runs(
     project_id: Optional[str] = Query(None, description="Filter by project ID. Defaults to active project."),
     status: Optional[str] = Query(None, description="Filter by execution status (QUEUED, RUNNING, etc.)."),
@@ -78,6 +80,16 @@ def review_run(
 ) -> RunReviewResponse:
     """Submit approval or rejection for a run in AWAITING_REVIEW status."""
     return service.submit_review(db, run_id, request)
+
+
+@router.post("/{run_id}/abort", response_model=RunResponse)
+def abort_run(
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> RunResponse:
+    """Abort an active, queued, or awaiting-review run immediately."""
+    run = service.abort_run(db, run_id)
+    return RunResponse.model_validate(run)
 
 
 @router.get("/{run_id}/stream")

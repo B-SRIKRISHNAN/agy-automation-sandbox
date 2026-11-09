@@ -26,6 +26,7 @@ class PipelineContext:
     base_branch: str = "master"
     worktree_name: str = ""
     branch_name: str = ""
+    container_name: str = ""
     worktree_path: Optional[Path] = None
     engine: str = "auto"
     interactive: bool = False
@@ -73,6 +74,11 @@ class PipelineContext:
             if not self.branch_name:
                 self.branch_name = f"issue-{clean_id}"
 
+        if not self.container_name:
+            from .engine import derive_container_names
+            c_name, _ = derive_container_names(self.target_repo, worktree_name=self.worktree_name)
+            self.container_name = c_name
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert context to a serializable dictionary for logging and API serialization."""
         return {
@@ -82,6 +88,7 @@ class PipelineContext:
             "base_branch": self.base_branch,
             "worktree_name": self.worktree_name,
             "branch_name": self.branch_name,
+            "container_name": self.container_name,
             "worktree_path": str(self.worktree_path) if self.worktree_path else None,
             "engine": self.engine,
             "interactive": self.interactive,

@@ -27,6 +27,14 @@ class TestRunsRouter(InMemoryDatabaseTestCase):
         self.db.commit()
 
     @patch("threading.Thread")
+    def test_trigger_run_without_trailing_slash_returns_201(self, mock_thread_cls):
+        mock_thread_cls.return_value = MagicMock()
+        payload = {"target_type": "issue", "target_id": "42"}
+        res = self.client.post("/api/runs", json=payload)
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.json()["status"], "QUEUED")
+
+    @patch("threading.Thread")
     def test_trigger_run_success(self, mock_thread_cls):
         mock_thread = MagicMock()
         mock_thread_cls.return_value = mock_thread
@@ -43,6 +51,7 @@ class TestRunsRouter(InMemoryDatabaseTestCase):
         self.assertEqual(data["project_id"], self.project.id)
         self.assertEqual(data["status"], "QUEUED")
         self.assertEqual(data["target_id"], "42")
+        self.assertEqual(data["container_name"], "agy-sandbox-router-repo-worktree-issue-42")
 
     def test_trigger_run_no_active_project_returns_400(self):
         self.project.is_active = False
@@ -142,3 +151,25 @@ class TestRunsRouter(InMemoryDatabaseTestCase):
         res = self.client.get("/api/runs/run-stream-api/stream")
         self.assertEqual(res.status_code, 200)
         self.assertIn("text/event-stream", res.headers.get("content-type", ""))
+
+    def test_list_runs_without_trailing_slash(self):
+        res = self.client.get("/api/runs")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("runs", res.json())
+
+    def test_abort_run_endpoint(self):
+        run = Run(
+            id="run-abort-api",
+            project_id=self.project.id,
+            target_type="issue",
+            target_id="30",
+            status=RunStatus.RUNNING.value,
+        )
+        runs_repo.create(self.db, run)
+        service.run_manager.register_run("run-abort-api")
+
+        res = self.client.post("/api/runs/run-abort-api/abort")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["id"], "run-abort-api")
+        self.assertEqual(data["status"], "ABORTED")

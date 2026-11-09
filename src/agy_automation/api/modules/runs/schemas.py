@@ -35,6 +35,7 @@ class RunResponse(BaseModel):
     target_id: str
     status: str
     worktree_name: Optional[str] = None
+    container_name: Optional[str] = None
     branch_name: Optional[str] = None
     base_branch: str = "master"
     conversation_id: Optional[str] = None
@@ -74,6 +75,7 @@ class RunDiffResponse(BaseModel):
     """Git diff and commits preview for an active run awaiting review."""
     run_id: str
     worktree_name: Optional[str] = None
+    container_name: Optional[str] = None
     branch_name: Optional[str] = None
     base_branch: str = "master"
     diff_stat: str = ""

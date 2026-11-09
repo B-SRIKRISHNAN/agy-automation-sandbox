@@ -30,6 +30,7 @@ class Run(Base):
     target_id: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="QUEUED", nullable=False, index=True)
     worktree_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    container_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     branch_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     base_branch: Mapped[str] = mapped_column(String(255), default="master", nullable=False)
     conversation_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

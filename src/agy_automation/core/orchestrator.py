@@ -13,7 +13,7 @@ from .config import (
     get_toolkit_root,
 )
 from .context import PipelineContext
-from .engine import detect_container_engine, verify_agy_installed
+from .engine import derive_container_names, detect_container_engine, verify_agy_installed
 from .fetch_issue import fetch_and_confirm_issue
 from .git import get_current_branch, sanitize_session_name
 from .logging import RunSession
@@ -127,6 +127,7 @@ def run_pipeline(
     # Initialize RunSession for isolated, OS-agnostic logging
     session_target = session_slug if is_session else str(issue_number)
     session_logger = RunSession(project_name=target_repo.name, target=session_target, run_id=run_id)
+    scoped_container_name = context.container_name if (context and context.container_name) else derive_container_names(target_repo, worktree_name=worktree_name)[0]
     session_logger.update_context(
         repo_path=str(target_repo),
         base_branch=current_branch,
@@ -134,7 +135,7 @@ def run_pipeline(
         worktree_name=worktree_name,
         worktree_path=str(worktree_path),
         engine=engine_desc,
-        container_name=f"{target_repo.name}-sandbox",
+        container_name=scoped_container_name,
         run_id=run_id,
         conversation_id=conversation_id,
     )

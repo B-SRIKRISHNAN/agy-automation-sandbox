@@ -1,5 +1,7 @@
 """Service and in-memory lifecycle manager for Runs."""
 
+import shutil
+import subprocess
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -21,6 +23,7 @@ from agy_automation.api.modules.runs.schemas import (
     RunStatus,
 )
 from agy_automation.core.context import CallerMode, PipelineContext
+from agy_automation.core.engine import derive_container_names
 from agy_automation.core.logging import get_logger
 from agy_automation.core.orchestrator import run_pipeline
 from agy_automation.core.push import push_changes
@@ -36,6 +39,7 @@ class RunManager:
         self._events: Dict[str, threading.Event] = {}
         self._decisions: Dict[str, bool] = {}
         self._push_decisions: Dict[str, bool] = {}
+        self._aborted: set = set()
         self._lock = threading.Lock()
 
     def register_run(self, run_id: str) -> None:
@@ -44,11 +48,26 @@ class RunManager:
             self._events[run_id] = threading.Event()
             self._decisions[run_id] = False
             self._push_decisions[run_id] = False
+            self._aborted.discard(run_id)
 
     def is_waiting(self, run_id: str) -> bool:
         """Check if an active thread is registered and awaiting review for run_id."""
         with self._lock:
             return run_id in self._events and not self._events[run_id].is_set()
+
+    def request_abort(self, run_id: str) -> None:
+        """Mark run as aborted and unblock any waiting worker thread."""
+        with self._lock:
+            self._aborted.add(run_id)
+            self._decisions[run_id] = False
+            event = self._events.get(run_id)
+            if event:
+                event.set()
+
+    def is_aborted(self, run_id: str) -> bool:
+        """Check if run was requested to abort."""
+        with self._lock:
+            return run_id in self._aborted
 
     def wait_for_decision(self, run_id: str, timeout: float = 1800.0) -> bool:
         """Pause current worker thread until review decision is submitted or timeout expires."""
@@ -91,6 +110,7 @@ class RunManager:
             self._events.pop(run_id, None)
             self._decisions.pop(run_id, None)
             self._push_decisions.pop(run_id, None)
+            self._aborted.discard(run_id)
 
 
 # Global process singleton
@@ -118,12 +138,27 @@ def start_run(db: Session, request: RunCreateRequest) -> Run:
         )
 
     run_id = generate_run_id()
+    context = PipelineContext(
+        target_repo=Path(project.path),
+        target_type=request.target_type,
+        target_id=request.target_id,
+        base_branch=project.git_branch or "master",
+        engine=request.engine,
+        auto_approve=request.auto_approve,
+        caller_mode=CallerMode.API,
+        run_id=run_id,
+        conversation_id=request.conversation_id,
+    )
+
     run = Run(
         id=run_id,
         project_id=project.id,
         target_type=request.target_type,
         target_id=request.target_id,
         status=RunStatus.QUEUED.value,
+        worktree_name=context.worktree_name,
+        branch_name=context.branch_name,
+        container_name=context.container_name,
         base_branch=project.git_branch or "master",
         auto_approve=request.auto_approve,
         engine=request.engine,
@@ -145,6 +180,7 @@ def start_run(db: Session, request: RunCreateRequest) -> Run:
                     run_id,
                     worktree_name=context.worktree_name,
                     branch_name=context.branch_name,
+                    container_name=context.container_name,
                     base_branch=context.base_branch,
                     log_dir=log_dir_str,
                     conversation_id=context.conversation_id,
@@ -152,19 +188,7 @@ def start_run(db: Session, request: RunCreateRequest) -> Run:
                 runs_repo.update_status(worker_db, run_id, RunStatus.AWAITING_REVIEW.value)
                 return run_manager.wait_for_decision(run_id)
 
-            context = PipelineContext(
-                target_repo=Path(project.path),
-                target_type=request.target_type,
-                target_id=request.target_id,
-                base_branch=project.git_branch or "master",
-                engine=request.engine,
-                auto_approve=request.auto_approve,
-                caller_mode=CallerMode.API,
-                run_id=run_id,
-                conversation_id=request.conversation_id,
-                approval_callback=_approval_hook,
-            )
-
+            context.approval_callback = _approval_hook
             exit_code = run_pipeline(context=context)
 
             log_dir_str = str(context.session_logger.run_dir) if context.session_logger else None
@@ -173,9 +197,14 @@ def start_run(db: Session, request: RunCreateRequest) -> Run:
                 run_id,
                 worktree_name=context.worktree_name,
                 branch_name=context.branch_name,
+                container_name=context.container_name,
                 base_branch=context.base_branch,
                 log_dir=log_dir_str,
             )
+
+            if run_manager.is_aborted(run_id):
+                runs_repo.update_status(worker_db, run_id, RunStatus.ABORTED.value, error_message="Aborted by user request.", finished=True)
+                return
 
             if exit_code == 0:
                 runs_repo.update_status(worker_db, run_id, RunStatus.COMPLETED.value, finished=True)
@@ -184,14 +213,17 @@ def start_run(db: Session, request: RunCreateRequest) -> Run:
                 runs_repo.update_status(worker_db, run_id, RunStatus.FAILED.value, error_message=err_msg, finished=True)
 
         except Exception as exc:
-            logger.exception("Background execution failed for run %s: %s", run_id, exc)
-            runs_repo.update_status(
-                worker_db,
-                run_id,
-                RunStatus.FAILED.value,
-                error_message=str(exc),
-                finished=True,
-            )
+            if run_manager.is_aborted(run_id):
+                runs_repo.update_status(worker_db, run_id, RunStatus.ABORTED.value, error_message="Aborted by user request.", finished=True)
+            else:
+                logger.exception("Background execution failed for run %s: %s", run_id, exc)
+                runs_repo.update_status(
+                    worker_db,
+                    run_id,
+                    RunStatus.FAILED.value,
+                    error_message=str(exc),
+                    finished=True,
+                )
         finally:
             run_manager.cleanup_run(run_id)
             worker_db.close()
@@ -346,3 +378,41 @@ def submit_review(db: Session, run_id: str, request: RunReviewRequest) -> RunRev
         pushed=pushed,
         message="Run merged and finalized successfully from persisted state.",
     )
+
+
+def abort_run(db: Session, run_id: str) -> Run:
+    """Abort an active, queued, or awaiting-review run immediately."""
+    run = get_run(db, run_id)
+    if run.status in (RunStatus.COMPLETED.value, RunStatus.FAILED.value, RunStatus.ABORTED.value):
+        return run
+
+    run_manager.request_abort(run_id)
+
+    target_container = run.container_name
+    if not target_container:
+        project = projects_repo.get_by_id(db, run.project_id)
+        if project:
+            target_container, _ = derive_container_names(Path(project.path), worktree_name=run.worktree_name or "")
+
+    if target_container:
+        try:
+            for engine_cmd in ("docker", "podman"):
+                engine_bin = shutil.which(engine_cmd)
+                if engine_bin:
+                    subprocess.run(
+                        [engine_bin, "rm", "-f", target_container],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=5,
+                    )
+        except Exception as exc:
+            logger.warning("Could not terminate container %s for run %s: %s", target_container, run_id, exc)
+
+    updated = runs_repo.update_status(
+        db,
+        run_id,
+        RunStatus.ABORTED.value,
+        error_message="Aborted by user request.",
+        finished=True,
+    )
+    return updated or run
