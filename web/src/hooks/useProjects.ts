@@ -21,8 +21,12 @@ export function useProjects() {
 
   const registerMutation = useMutation({
     mutationFn: api.registerProject,
-    onSuccess: () => {
+    onSuccess: (newProj) => {
       queryClient.invalidateQueries({ queryKey: ['projects'] });
+      // Auto-activate the newly registered project
+      if (newProj?.id) {
+        selectMutation.mutate(newProj.id);
+      }
     },
   });
 
@@ -34,8 +38,12 @@ export function useProjects() {
     isLoading: projectsQuery.isLoading,
     error: projectsQuery.error,
     selectProject: selectMutation.mutate,
+    selectProjectAsync: selectMutation.mutateAsync,
     isSelecting: selectMutation.isPending,
+    selectError: selectMutation.error,
     registerProject: registerMutation.mutate,
+    registerProjectAsync: registerMutation.mutateAsync,
     isRegistering: registerMutation.isPending,
+    registerError: registerMutation.error,
   };
 }

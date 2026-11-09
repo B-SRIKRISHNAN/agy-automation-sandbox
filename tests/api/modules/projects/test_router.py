@@ -70,10 +70,18 @@ class TestProjectsRouter(InMemoryDatabaseTestCase):
             self.assertEqual(r1_re.status_code, 200)
             self.assertEqual(r1_re.json()["id"], p1_id)
 
-            # 7. Select p2 as active
+            # 7. Select p2 as active (using POST)
             sel_resp = self.client.post(f"/api/projects/{p2_id}/select")
             self.assertEqual(sel_resp.status_code, 200)
             self.assertTrue(sel_resp.json()["is_active"])
+
+            # 7b. Select p1 as active using PUT alias
+            sel_put_resp = self.client.put(f"/api/projects/{p1_id}/select")
+            self.assertEqual(sel_put_resp.status_code, 200)
+            self.assertTrue(sel_put_resp.json()["is_active"])
+
+            # Re-select p2 with POST for deletion test
+            self.client.post(f"/api/projects/{p2_id}/select")
 
             # Verify active is now p2
             active_resp2 = self.client.get("/api/projects/active")

@@ -5,6 +5,7 @@ import { useProjects } from '../../hooks/useProjects';
 import { useRuns } from '../../hooks/useRuns';
 import { IssueCard } from './IssueCard';
 import { LaunchRunModal } from './LaunchRunModal';
+import { ProjectSelector } from './ProjectSelector';
 import { Button } from '../common/Button';
 import { Modal } from '../common/Modal';
 import type { Issue } from '../../api/types';
@@ -72,12 +73,15 @@ export function LauncherTab({ onRunLaunched }: LauncherTabProps) {
 
   if (!activeProject) {
     return (
-      <div className="flex flex-col items-center justify-center p-12 text-center rounded-3xl bg-slate-900 border border-slate-800">
-        <GitPullRequest className="w-10 h-10 text-slate-600 mb-3" />
-        <h3 className="text-base font-bold text-slate-200">No Active Project Selected</h3>
-        <p className="text-xs text-slate-400 mt-1 max-w-sm">
-          Please select or register a local repository from the top navigation bar to view issues and launch automated runs.
+      <div className="flex flex-col items-center justify-center p-10 text-center rounded-3xl bg-slate-900 border border-slate-800">
+        <GitPullRequest className="w-12 h-12 text-indigo-400/80 mb-3" />
+        <h3 className="text-base font-bold text-slate-100">No Active Project Selected</h3>
+        <p className="text-xs text-slate-400 mt-1 max-w-sm mb-5">
+          Select an existing repository or register a new local repository to browse issues and launch automated runs.
         </p>
+        <div className="w-full max-w-xs">
+          <ProjectSelector />
+        </div>
       </div>
     );
   }
@@ -93,7 +97,7 @@ export function LauncherTab({ onRunLaunched }: LauncherTabProps) {
             placeholder="Search issues by title, #number, label..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-3.5 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+            className="w-full pl-9 pr-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
           />
         </div>
 
@@ -101,15 +105,18 @@ export function LauncherTab({ onRunLaunched }: LauncherTabProps) {
           <Button
             size="sm"
             variant="outline"
+            className="px-2.5 sm:px-3"
             onClick={() => refetch()}
             isLoading={isRefetching}
             icon={<RefreshCw className="w-3.5 h-3.5" />}
+            title="Refresh Issues"
           >
-            Refresh
+            <span className="hidden sm:inline">Refresh</span>
           </Button>
           <Button
             size="sm"
             variant="secondary"
+            className="flex-1 sm:flex-none justify-center"
             onClick={() => setIsNewIssueModalOpen(true)}
             icon={<Plus className="w-3.5 h-3.5" />}
           >
@@ -118,6 +125,7 @@ export function LauncherTab({ onRunLaunched }: LauncherTabProps) {
           <Button
             size="sm"
             variant="primary"
+            className="flex-1 sm:flex-none justify-center"
             onClick={() => handleOpenLaunch()}
             icon={<Play className="w-3.5 h-3.5 fill-current" />}
           >

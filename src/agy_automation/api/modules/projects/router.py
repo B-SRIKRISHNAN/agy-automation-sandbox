@@ -71,6 +71,11 @@ def get_active_project(response: Response, db: Session = Depends(get_db)):
     response_model=ProjectResponse,
     summary="Select a project as active",
 )
+@router.put(
+    "/{project_id}/select",
+    response_model=ProjectResponse,
+    summary="Select a project as active (idempotent PUT alias)",
+)
 def select_active_project(project_id: str, db: Session = Depends(get_db)):
     """Atomically activate the specified project and deactivate all others."""
     project = repository.set_active(db, project_id)

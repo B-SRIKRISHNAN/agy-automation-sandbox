@@ -46,7 +46,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 export const api = {
   // Projects
   getProjects: () => request<ProjectListResponse>('/api/projects'),
-  selectProject: (id: string) => request<Project>(`/api/projects/${id}/select`, { method: 'PUT' }),
+  selectProject: (id: string) => request<Project>(`/api/projects/${id}/select`, { method: 'POST' }),
   registerProject: (path: string) => request<Project>('/api/projects', {
     method: 'POST',
     body: JSON.stringify({ path }),

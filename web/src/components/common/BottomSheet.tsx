@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 interface BottomSheetProps {
@@ -18,12 +19,13 @@ export function BottomSheet({ isOpen, onClose, title, children }: BottomSheetPro
   }, [isOpen, onClose]);
 
   if (!isOpen) return null;
+  if (typeof document === 'undefined') return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-end">
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex flex-col justify-end">
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-slate-950/75 backdrop-blur-sm transition-opacity"
+        className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm transition-opacity"
         onClick={onClose}
       />
 
@@ -31,14 +33,14 @@ export function BottomSheet({ isOpen, onClose, title, children }: BottomSheetPro
       <div
         role="dialog"
         aria-modal="true"
-        className="relative z-10 w-full max-h-[85vh] rounded-t-3xl bg-slate-900 border-t border-slate-800 p-6 shadow-2xl flex flex-col overflow-hidden pb-[calc(1.5rem+env(safe-area-inset-bottom))]"
+        className="relative z-10 w-full max-h-[88dvh] rounded-t-3xl bg-slate-900 border-t border-slate-800 p-5 sm:p-6 shadow-2xl flex flex-col overflow-hidden pb-[calc(1.5rem+env(safe-area-inset-bottom))] animate-in fade-in slide-in-from-bottom-6 duration-200"
       >
         {/* Drag Pill indicator */}
-        <div className="mx-auto w-12 h-1.5 bg-slate-700/60 rounded-full mb-4 shrink-0" />
+        <div className="mx-auto w-12 h-1.5 bg-slate-700/60 rounded-full mb-3 shrink-0" />
 
         {/* Title Bar */}
-        <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 mb-4 shrink-0">
-          <h3 className="text-lg font-bold text-slate-100">{title}</h3>
+        <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 mb-3.5 shrink-0">
+          <h3 className="text-base sm:text-lg font-bold text-slate-100">{title}</h3>
           <button
             onClick={onClose}
             className="rounded-full p-1.5 text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition"
@@ -53,6 +55,7 @@ export function BottomSheet({ isOpen, onClose, title, children }: BottomSheetPro
           {children}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

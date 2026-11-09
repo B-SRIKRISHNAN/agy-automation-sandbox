@@ -32,10 +32,10 @@ export function QuotaPill() {
     <>
       <button
         onClick={() => setIsDrawerOpen(true)}
-        className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition active:scale-95 shadow-sm ${badgeColor}`}
+        className={`inline-flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-full text-xs font-semibold border transition active:scale-95 shadow-sm shrink-0 ${badgeColor}`}
         title="Antigravity CLI Quota (Click for details)"
       >
-        <span className="relative flex h-2 w-2">
+        <span className="relative flex h-2 w-2 shrink-0">
           <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${dotColor}`} />
           <span className={`relative inline-flex rounded-full h-2 w-2 ${dotColor}`} />
         </span>
@@ -43,11 +43,10 @@ export function QuotaPill() {
         {isLoading ? (
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
         ) : (
-          <div className="flex items-center gap-1.5 font-mono">
-            <Zap className="w-3.5 h-3.5" />
-            <span>{fiveHPercent}% (5h)</span>
-            <span className="text-slate-500">·</span>
-            <span>{weeklyPercent}% (wk)</span>
+          <div className="flex items-center gap-1 font-mono">
+            <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span className="sm:hidden">{fiveHPercent}%</span>
+            <span className="hidden sm:inline">{fiveHPercent}% (5h) · {weeklyPercent}% (wk)</span>
           </div>
         )}
       </button>

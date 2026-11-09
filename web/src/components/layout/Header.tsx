@@ -5,10 +5,10 @@ import { QuotaPill } from '../quota/QuotaPill';
 export function Header() {
   return (
     <header className="sticky top-0 z-30 w-full bg-slate-950/80 backdrop-blur-md border-b border-slate-800/80 px-4 py-3">
-      <div className="max-w-6xl mx-auto flex items-center justify-between gap-3">
+      <div className="max-w-6xl mx-auto flex items-center justify-between gap-2.5 sm:gap-4">
         {/* Left: Branding & Project */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <div className="flex items-center gap-2 shrink-0">
             <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-500 flex items-center justify-center text-white shadow-md shadow-indigo-500/20">
               <Sparkles className="w-4 h-4" />
             </div>
@@ -21,7 +21,7 @@ export function Header() {
         </div>
 
         {/* Right: Live Quota Pill */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <QuotaPill />
         </div>
       </div>
