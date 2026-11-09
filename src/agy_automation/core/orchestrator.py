@@ -12,7 +12,7 @@ from .config import (
     get_target_repo,
     get_toolkit_root,
 )
-from .context import PipelineContext
+from .context import CallerMode, PipelineContext
 from .engine import derive_container_names, detect_container_engine, verify_agy_installed
 from .fetch_issue import fetch_and_confirm_issue
 from .git import get_current_branch, sanitize_session_name
@@ -107,6 +107,7 @@ def run_pipeline(
         except Exception:
             return 1
 
+    is_api = (context is not None and context.caller_mode == CallerMode.API)
     is_session = (target_mode == "session")
     if is_session:
         session_slug = sanitize_session_name(session_name)
@@ -189,8 +190,9 @@ Execute tasks, queries, code modifications, and tests inside this protected cont
         try:
             issue_data = fetch_and_confirm_issue(
                 issue_number,
-                auto_approve=auto_approve,
-                interactive=not auto_approve,
+                auto_approve=True if is_api else auto_approve,
+                interactive=False if is_api else (not auto_approve),
+                repo_dir=target_repo,
             )
         except Exception as exc:
             session_logger.finish("FAILED", error=f"Issue fetch failed: {exc}")
@@ -247,8 +249,9 @@ Execute tasks, queries, code modifications, and tests inside this protected cont
                 worktree_name=worktree_name,
                 branch_name=branch_name,
                 base_branch=current_branch,
-                auto_approve=auto_approve,
-                interactive=not auto_approve,
+                auto_approve=True if is_api else auto_approve,
+                interactive=False if is_api else (not auto_approve),
+                force=True if is_api else False,
                 repo_dir=target_repo,
             )
         except Exception as exc:
@@ -302,7 +305,7 @@ Execute tasks, queries, code modifications, and tests inside this protected cont
                 branch_name=branch_name,
                 base_branch=current_branch,
                 auto_approve=auto_approve,
-                interactive=not auto_approve,
+                interactive=False if is_api else (not auto_approve),
                 repo_dir=target_repo,
                 session_logger=session_logger,
                 approval_callback=approval_callback,
@@ -318,16 +321,41 @@ Execute tasks, queries, code modifications, and tests inside this protected cont
         # STEP 5: Confirm and push to remote
         # ==========================================================
         if merged:
-            print(f"\n{Colors.CYAN}>>> [STEP 5/5] Push changes to remote...{Colors.RESET}")
-            session_logger.log_event("coordinator", "push", "push_started")
-            pushed = push_changes(
-                branch_name=current_branch,
-                remote="origin",
-                auto_approve=auto_approve,
-                interactive=not auto_approve,
-                repo_dir=target_repo,
-            )
-            session_logger.log_event("coordinator", "push", "push_decision", {"pushed": bool(pushed)})
+            should_push = False
+            if is_api:
+                if context and getattr(context, "push_callback", None):
+                    should_push = bool(context.push_callback())
+                elif auto_approve:
+                    should_push = True
+            else:
+                should_push = auto_approve
+
+            if is_api:
+                if should_push:
+                    print(f"\n{Colors.CYAN}>>> [STEP 5/5] Push changes to remote...{Colors.RESET}")
+                    session_logger.log_event("coordinator", "push", "push_started")
+                    pushed = push_changes(
+                        branch_name=current_branch,
+                        remote="origin",
+                        auto_approve=True,
+                        interactive=False,
+                        repo_dir=target_repo,
+                    )
+                    session_logger.log_event("coordinator", "push", "push_decision", {"pushed": bool(pushed)})
+                else:
+                    print(f"\n{Colors.YELLOW}[INFO] Skipping push to remote (push not requested in review gate).{Colors.RESET}")
+                    session_logger.log_event("coordinator", "push", "push_skipped", {"reason": "push_not_requested"})
+            else:
+                print(f"\n{Colors.CYAN}>>> [STEP 5/5] Push changes to remote...{Colors.RESET}")
+                session_logger.log_event("coordinator", "push", "push_started")
+                pushed = push_changes(
+                    branch_name=current_branch,
+                    remote="origin",
+                    auto_approve=auto_approve,
+                    interactive=not auto_approve,
+                    repo_dir=target_repo,
+                )
+                session_logger.log_event("coordinator", "push", "push_decision", {"pushed": bool(pushed)})
         else:
             print(f"\n{Colors.YELLOW}[INFO] Skipping push since changes were not merged into '{current_branch}'.{Colors.RESET}")
             session_logger.log_event("coordinator", "push", "push_skipped", {"reason": "changes_not_merged"})

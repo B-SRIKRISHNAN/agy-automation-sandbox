@@ -249,3 +249,90 @@ class TestRunService(InMemoryDatabaseTestCase):
 
         result = service.abort_run(self.db, "run-already-completed")
         self.assertEqual(result.status, RunStatus.COMPLETED.value)
+
+    @patch("os.chdir")
+    @patch("agy_automation.core.orchestrator.push_changes")
+    @patch("agy_automation.core.orchestrator.review_and_merge")
+    @patch("agy_automation.core.orchestrator.run_sandbox")
+    @patch("agy_automation.core.orchestrator.inject_issue_context")
+    @patch("agy_automation.core.orchestrator.create_worktree")
+    @patch("agy_automation.core.orchestrator.fetch_and_confirm_issue")
+    @patch("agy_automation.core.orchestrator.detect_container_engine")
+    @patch("agy_automation.core.orchestrator.verify_agy_installed")
+    @patch("agy_automation.core.orchestrator.get_current_branch")
+    @patch("agy_automation.core.orchestrator.ensure_repo_exclude")
+    def test_orchestrator_api_mode_zero_terminal_prompts(
+        self,
+        mock_exclude,
+        mock_branch,
+        mock_verify,
+        mock_detect,
+        mock_fetch,
+        mock_worktree,
+        mock_inject,
+        mock_sandbox,
+        mock_merge,
+        mock_push,
+        mock_chdir,
+    ):
+        from pathlib import Path
+        from agy_automation.core.context import CallerMode, PipelineContext
+        from agy_automation.core.orchestrator import run_pipeline
+
+        mock_branch.return_value = "main"
+        mock_detect.return_value = ("docker", "Docker Engine (mock)")
+        mock_fetch.return_value = {
+            "number": 42,
+            "title": "Fix bug",
+            "url": "https://github.com/org/repo/issues/42",
+            "context": "Context for issue 42",
+        }
+        mock_sandbox.return_value = 0
+        mock_merge.return_value = True
+        mock_push.return_value = True
+
+        ctx = PipelineContext(
+            target_repo=Path("/tmp/service-repo"),
+            target_type="issue",
+            target_id="42",
+            base_branch="main",
+            auto_approve=False,  # Unchecked in UI
+            caller_mode=CallerMode.API,
+            run_id="run-api-no-prompt-test",
+        )
+        ctx.push_callback = lambda: True
+
+        exit_code = run_pipeline(context=ctx)
+        self.assertEqual(exit_code, 0)
+
+        # 1. Step 1: Must be auto_approve=True, interactive=False in API mode
+        mock_fetch.assert_called_once_with(
+            42,
+            auto_approve=True,
+            interactive=False,
+            repo_dir=Path("/tmp/service-repo"),
+        )
+
+        # 2. Step 2: Must be auto_approve=True, interactive=False, force=True
+        mock_worktree.assert_called_once_with(
+            worktree_name="worktree-issue-42",
+            branch_name="issue-42",
+            base_branch="main",
+            auto_approve=True,
+            interactive=False,
+            force=True,
+            repo_dir=Path("/tmp/service-repo"),
+        )
+
+        # 3. Step 4: Must be interactive=False
+        self.assertEqual(mock_merge.call_args.kwargs["interactive"], False)
+        self.assertEqual(mock_merge.call_args.kwargs["auto_approve"], False)
+
+        # 4. Step 5: Push called with auto_approve=True, interactive=False because push_callback returned True
+        mock_push.assert_called_once_with(
+            branch_name="main",
+            remote="origin",
+            auto_approve=True,
+            interactive=False,
+            repo_dir=Path("/tmp/service-repo"),
+        )

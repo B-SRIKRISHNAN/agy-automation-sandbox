@@ -43,6 +43,7 @@ class PipelineContext:
     run_id: Optional[str] = None
     conversation_id: Optional[str] = None
     approval_callback: Optional[Callable[[], bool]] = None
+    push_callback: Optional[Callable[[], bool]] = None
     stream_callback: Optional[Callable[[str], None]] = None
 
     def __post_init__(self) -> None:

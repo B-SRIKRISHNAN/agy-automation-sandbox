@@ -188,7 +188,11 @@ def start_run(db: Session, request: RunCreateRequest) -> Run:
                 runs_repo.update_status(worker_db, run_id, RunStatus.AWAITING_REVIEW.value)
                 return run_manager.wait_for_decision(run_id)
 
+            def _push_hook() -> bool:
+                return run_manager.get_push_decision(run_id)
+
             context.approval_callback = _approval_hook
+            context.push_callback = _push_hook
             exit_code = run_pipeline(context=context)
 
             log_dir_str = str(context.session_logger.run_dir) if context.session_logger else None
