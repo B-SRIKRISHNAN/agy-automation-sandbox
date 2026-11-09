@@ -1,0 +1,14 @@
+# Node dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Testing and coverage
+coverage/
+
+# Vite / build cache
+.vite/
+
+# Editor / OS files
+.DS_Store
+*.local

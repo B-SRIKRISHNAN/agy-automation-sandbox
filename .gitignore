@@ -20,6 +20,10 @@ __pycache__/
 .env
 .env.*
 
+# Node dependencies
+node_modules/
+web/node_modules/
+
 # OS / Editor files
 .DS_Store
 Thumbs.db
