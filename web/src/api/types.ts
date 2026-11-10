@@ -130,3 +130,49 @@ export interface QuotaResponse {
   updated_at: string;
   error?: string | null;
 }
+
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: string;
+  tool_call?: string | null;
+}
+
+export interface DraftIssue {
+  title: string;
+  body: string;
+}
+
+export interface ChatSession {
+  session_id: string;
+  project_id: string;
+  status: 'ACTIVE' | 'TERMINATED' | 'CONVERTED';
+  session_slug: string;
+  worktree_name: string;
+  branch_name: string;
+  conversation_id?: string | null;
+  messages: ChatMessage[];
+  draft_issue?: DraftIssue | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatSessionCreateRequest {
+  project_id?: string;
+  initial_prompt?: string;
+}
+
+export interface CreateAndRunRequest {
+  title: string;
+  body: string;
+  auto_approve?: boolean;
+  engine?: string;
+}
+
+export interface CreateAndRunResponse {
+  session_id: string;
+  issue_number: number;
+  issue_url: string;
+  run_id: string;
+  message: string;
+}

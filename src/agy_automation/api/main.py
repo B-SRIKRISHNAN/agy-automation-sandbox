@@ -12,6 +12,7 @@ from starlette.exceptions import HTTPException
 from starlette.staticfiles import StaticFiles
 
 from agy_automation.api.common.database import run_db_migrations
+from agy_automation.api.modules.chat.router import router as chat_router
 from agy_automation.api.modules.projects.router import router as projects_router
 from agy_automation.api.modules.runs.router import router as runs_router
 from agy_automation.api.modules.system.router import router as system_router
@@ -26,11 +27,11 @@ class SPAStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope):
         try:
             response = await super().get_response(path, scope)
-            if response.status_code == 404:
+            if response.status_code == 404 and not path.startswith("api"):
                 return await super().get_response("index.html", scope)
             return response
         except HTTPException as ex:
-            if ex.status_code == 404:
+            if ex.status_code == 404 and not path.startswith("api"):
                 return await super().get_response("index.html", scope)
             raise
 
@@ -87,6 +88,7 @@ def create_app() -> FastAPI:
     # 4. Mount Feature Routers
     app.include_router(projects_router, prefix="/api")
     app.include_router(runs_router, prefix="/api")
+    app.include_router(chat_router, prefix="/api")
     app.include_router(system_router, prefix="/api")
 
     # 5. Serve Mobile-First PWA (Vite dist) if built

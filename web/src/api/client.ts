@@ -1,4 +1,8 @@
 import type {
+  ChatSession,
+  ChatSessionCreateRequest,
+  CreateAndRunRequest,
+  CreateAndRunResponse,
   IssueCreateRequest,
   IssueListResponse,
   Project,
@@ -85,6 +89,38 @@ export const api = {
   getQuota: (forceRefresh = false) => {
     const qs = forceRefresh ? '?force_refresh=true' : '';
     return request<QuotaResponse>(`/api/system/quota${qs}`);
+  },
+
+  // Interactive AI Formulation Chat
+  createChatSession: (payload: ChatSessionCreateRequest) =>
+    request<ChatSession>('/api/chat-sessions', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  getChatSession: (sessionId: string) =>
+    request<ChatSession>(`/api/chat-sessions/${sessionId}`),
+
+  sendChatMessage: (sessionId: string, content: string) =>
+    request<ChatSession>(`/api/chat-sessions/${sessionId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ content }),
+    }),
+
+  terminateChatSession: (sessionId: string) =>
+    request<ChatSession>(`/api/chat-sessions/${sessionId}/terminate`, {
+      method: 'POST',
+    }),
+
+  createAndRunFromChat: (sessionId: string, payload: CreateAndRunRequest) =>
+    request<CreateAndRunResponse>(`/api/chat-sessions/${sessionId}/create-and-run`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  getChatStreamUrl: (sessionId: string) => {
+    const base = getApiBase();
+    return `${base}/api/chat-sessions/${sessionId}/stream`;
   },
 
   // SSE Stream URL

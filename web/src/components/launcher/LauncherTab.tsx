@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Search, Plus, Play, RefreshCw, AlertCircle, GitPullRequest } from 'lucide-react';
+import { Search, Plus, Play, RefreshCw, AlertCircle, GitPullRequest, Sparkles } from 'lucide-react';
 import { useIssues } from '../../hooks/useIssues';
 import { useProjects } from '../../hooks/useProjects';
 import { useRuns } from '../../hooks/useRuns';
 import { IssueCard } from './IssueCard';
 import { LaunchRunModal } from './LaunchRunModal';
 import { ProjectSelector } from './ProjectSelector';
+import { ChatAssistantDrawer } from '../chat/ChatAssistantDrawer';
 import { Button } from '../common/Button';
 import { Modal } from '../common/Modal';
 import type { Issue } from '../../api/types';
@@ -23,6 +24,7 @@ export function LauncherTab({ onRunLaunched }: LauncherTabProps) {
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
   const [isLaunchModalOpen, setIsLaunchModalOpen] = useState(false);
   const [isNewIssueModalOpen, setIsNewIssueModalOpen] = useState(false);
+  const [isChatDrawerOpen, setIsChatDrawerOpen] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newBody, setNewBody] = useState('');
 
@@ -101,11 +103,11 @@ export function LauncherTab({ onRunLaunched }: LauncherTabProps) {
           />
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
           <Button
             size="sm"
             variant="outline"
-            className="px-2.5 sm:px-3"
+            className="px-2.5 sm:px-3 shrink-0"
             onClick={() => refetch()}
             isLoading={isRefetching}
             icon={<RefreshCw className="w-3.5 h-3.5" />}
@@ -113,19 +115,31 @@ export function LauncherTab({ onRunLaunched }: LauncherTabProps) {
           >
             <span className="hidden sm:inline">Refresh</span>
           </Button>
+
           <Button
             size="sm"
             variant="secondary"
-            className="flex-1 sm:flex-none justify-center"
+            className="shrink-0 justify-center bg-indigo-950/60 border-indigo-800/80 text-indigo-300 hover:bg-indigo-900/60"
+            onClick={() => setIsChatDrawerOpen(true)}
+            icon={<Sparkles className="w-3.5 h-3.5 text-indigo-400" />}
+          >
+            <span>Formulate with AI</span>
+          </Button>
+
+          <Button
+            size="sm"
+            variant="secondary"
+            className="shrink-0 justify-center"
             onClick={() => setIsNewIssueModalOpen(true)}
             icon={<Plus className="w-3.5 h-3.5" />}
           >
             New Issue
           </Button>
+
           <Button
             size="sm"
             variant="primary"
-            className="flex-1 sm:flex-none justify-center"
+            className="shrink-0 justify-center"
             onClick={() => handleOpenLaunch()}
             icon={<Play className="w-3.5 h-3.5 fill-current" />}
           >
@@ -218,6 +232,15 @@ export function LauncherTab({ onRunLaunched }: LauncherTabProps) {
           </div>
         </form>
       </Modal>
+
+      {/* Interactive AI Issue Formulation Drawer */}
+      <ChatAssistantDrawer
+        isOpen={isChatDrawerOpen}
+        onClose={() => setIsChatDrawerOpen(false)}
+        projectId={activeProject?.id}
+        projectName={activeProject?.name}
+        onRunLaunched={onRunLaunched}
+      />
     </div>
   );
 }
