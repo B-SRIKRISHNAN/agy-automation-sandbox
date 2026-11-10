@@ -30,3 +30,37 @@ class QuotaResponse(BaseModel):
     cached: bool = Field(False, description="Whether this response was served from in-memory TTL cache")
     updated_at: datetime = Field(..., description="Timestamp when quota data was fetched")
     error: Optional[str] = Field(None, description="Error message if quota query failed")
+
+
+class WorktreeStorageItem(BaseModel):
+    """Details for a single git worktree in the project directory."""
+    name: str = Field(..., description="Worktree folder name")
+    path: str = Field(..., description="Absolute filesystem path")
+    size_bytes: int = Field(0, description="Size in bytes")
+    size_human: str = Field("0 B", description="Human-readable size (e.g. '230 MB')")
+    is_orphaned: bool = Field(True, description="True if not associated with an active running or awaiting-review run")
+    run_id: Optional[str] = Field(None, description="Linked run ID if any")
+    branch_name: Optional[str] = Field(None, description="Git branch name if known")
+
+
+class StorageInfoResponse(BaseModel):
+    """Complete storage consumption breakdown for worktrees, logs, and containers."""
+    project_id: str = Field(..., description="Active project ID")
+    project_name: str = Field(..., description="Active project name")
+    worktrees_total_count: int = Field(0, description="Total worktree directories found")
+    worktrees_orphaned_count: int = Field(0, description="Number of orphaned worktrees")
+    worktrees_total_bytes: int = Field(0, description="Total size in bytes of all worktrees")
+    worktrees_total_human: str = Field("0 B", description="Total size human-formatted")
+    runs_logs_bytes: int = Field(0, description="Size of run session logs")
+    runs_logs_human: str = Field("0 B", description="Run session logs human-formatted")
+    containers_count: int = Field(0, description="Number of sandbox containers detected")
+    items: List[WorktreeStorageItem] = Field(default_factory=list, description="List of worktrees")
+
+
+class StoragePruneResponse(BaseModel):
+    """Result of pruning orphaned worktrees and stale containers."""
+    pruned_worktrees: List[str] = Field(default_factory=list, description="Names of pruned worktrees")
+    reclaimed_bytes: int = Field(0, description="Total bytes freed")
+    reclaimed_human: str = Field("0 B", description="Human-formatted reclaimed size")
+    pruned_containers: int = Field(0, description="Number of containers removed")
+    message: str = Field(..., description="Summary status message")

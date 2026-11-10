@@ -25,6 +25,9 @@ export function ReviewGate({ onApprovedOrRejected }: ReviewGateProps) {
 
   const handleDecision = async (approved: boolean) => {
     if (!activeRunId || isSubmitting || isSubmittingReview) return;
+    if (!approved && !confirm('Reject this run? This will delete the temporary worktree and branch to immediately free disk space.')) {
+      return;
+    }
     setIsSubmitting(true);
     setResultFeedback(null);
     try {
@@ -121,8 +124,9 @@ export function ReviewGate({ onApprovedOrRejected }: ReviewGateProps) {
                 isLoading={isSubmitting || isSubmittingReview}
                 icon={<X className="w-3.5 h-3.5" />}
                 className="w-full sm:w-auto justify-center py-2 sm:py-1.5"
+                title="Reject changes and immediately delete temporary worktree"
               >
-                Reject
+                Reject & Clean
               </Button>
 
               <Button

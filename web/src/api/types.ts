@@ -176,3 +176,34 @@ export interface CreateAndRunResponse {
   run_id: string;
   message: string;
 }
+
+export interface WorktreeStorageItem {
+  name: string;
+  path: string;
+  size_bytes: number;
+  size_human: string;
+  is_orphaned: boolean;
+  run_id?: string | null;
+  branch_name?: string | null;
+}
+
+export interface StorageInfoResponse {
+  project_id: string;
+  project_name: string;
+  worktrees_total_count: number;
+  worktrees_orphaned_count: number;
+  worktrees_total_bytes: number;
+  worktrees_total_human: string;
+  runs_logs_bytes: number;
+  runs_logs_human: string;
+  containers_count: number;
+  items: WorktreeStorageItem[];
+}
+
+export interface StoragePruneResponse {
+  pruned_worktrees: string[];
+  reclaimed_bytes: number;
+  reclaimed_human: string;
+  pruned_containers: number;
+  message: string;
+}

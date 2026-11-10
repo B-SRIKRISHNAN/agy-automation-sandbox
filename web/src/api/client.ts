@@ -14,6 +14,8 @@ import type {
   RunListResponse,
   RunReviewRequest,
   RunReviewResponse,
+  StorageInfoResponse,
+  StoragePruneResponse,
 } from './types';
 
 function getApiBase(): string {
@@ -85,10 +87,20 @@ export const api = {
     body: JSON.stringify(payload),
   }),
 
-  // System & Quota
+  // System & Quota & Storage
   getQuota: (forceRefresh = false) => {
     const qs = forceRefresh ? '?force_refresh=true' : '';
     return request<QuotaResponse>(`/api/system/quota${qs}`);
+  },
+  getStorageInfo: (projectId?: string) => {
+    const qs = projectId ? `?project_id=${projectId}` : '';
+    return request<StorageInfoResponse>(`/api/system/storage${qs}`);
+  },
+  pruneStorage: (projectId?: string) => {
+    const qs = projectId ? `?project_id=${projectId}` : '';
+    return request<StoragePruneResponse>(`/api/system/storage/prune${qs}`, {
+      method: 'POST',
+    });
   },
 
   // Interactive AI Formulation Chat

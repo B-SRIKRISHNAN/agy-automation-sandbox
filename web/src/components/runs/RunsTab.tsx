@@ -21,7 +21,7 @@ export function RunsTab({ selectedRunId, onSelectRunId, onNavigateToReview }: Ru
   const activeRunningRun = runs.find((r) => r.status === 'RUNNING' || r.status === 'QUEUED');
 
   const handleAbort = async (runId: string) => {
-    if (confirm('Are you sure you want to immediately abort this active run and terminate its container?')) {
+    if (confirm('Are you sure you want to abort this active run? This will terminate its container and delete the temporary worktree to free disk space.')) {
       await abortRun(runId);
     }
   };

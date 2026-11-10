@@ -23,6 +23,7 @@ from agy_automation.api.modules.runs.schemas import (
     RunReviewResponse,
     RunStatus,
 )
+from agy_automation.core.cleanup import cleanup_worktree
 from agy_automation.core.context import CallerMode, PipelineContext
 from agy_automation.core.engine import derive_container_names
 from agy_automation.core.git import is_branch_existing
@@ -32,6 +33,8 @@ from agy_automation.core.push import push_changes
 from agy_automation.core.review_merge import prepare_review_data, review_and_merge
 
 logger = get_logger("agy_automation.api.runs.service")
+
+DEFAULT_MAX_RUNTIME_SECONDS = 2700.0  # 45 minutes execution watchdog limit
 
 
 class RunManager:
@@ -198,6 +201,20 @@ def start_run(db: Session, request: RunCreateRequest) -> Run:
 
     def _worker() -> None:
         worker_db = SessionLocal()
+
+        # Setup execution watchdog timer to prevent infinite loops (45 mins)
+        def _watchdog_fire():
+            logger.warning("Execution watchdog fired for run %s: exceeded max runtime limit (%ss)", run_id, DEFAULT_MAX_RUNTIME_SECONDS)
+            try:
+                with SessionLocal() as db_session:
+                    abort_run(db_session, run_id, clean_worktree=True, reason=f"Execution timed out after {int(DEFAULT_MAX_RUNTIME_SECONDS // 60)} minutes (watchdog triggered).")
+            except Exception as w_exc:
+                logger.error("Error during watchdog abort for run %s: %s", run_id, w_exc)
+
+        watchdog = threading.Timer(DEFAULT_MAX_RUNTIME_SECONDS, _watchdog_fire)
+        watchdog.daemon = True
+        watchdog.start()
+
         try:
             runs_repo.update_status(worker_db, run_id, RunStatus.RUNNING.value)
 
@@ -244,6 +261,12 @@ def start_run(db: Session, request: RunCreateRequest) -> Run:
                 if is_merged:
                     runs_repo.update_status(worker_db, run_id, RunStatus.COMPLETED.value, finished=True)
                 elif run_manager.is_rejected(run_id):
+                    repo_dir = Path(project.path)
+                    if repo_dir.exists() and context.worktree_name:
+                        try:
+                            cleanup_worktree(context.worktree_name, context.branch_name or "", force=True, repo_dir=repo_dir)
+                        except Exception as c_exc:
+                            logger.warning("Failed to clean rejected worktree %s: %s", context.worktree_name, c_exc)
                     runs_repo.update_status(worker_db, run_id, RunStatus.ABORTED.value, error_message="Review rejected by user.", finished=True)
                 else:
                     logger.info(
@@ -268,6 +291,7 @@ def start_run(db: Session, request: RunCreateRequest) -> Run:
                     finished=True,
                 )
         finally:
+            watchdog.cancel()
             run_manager.cleanup_run(run_id)
             worker_db.close()
 
@@ -438,13 +462,19 @@ def submit_review(db: Session, run_id: str, request: RunReviewRequest) -> RunRev
 
         # 2. Resumption Path: worker exited or server rebooted
         if not request.approved:
+            repo_dir = Path(project.path)
+            if repo_dir.exists() and run.worktree_name:
+                try:
+                    cleanup_worktree(run.worktree_name, run.branch_name or "", force=True, repo_dir=repo_dir)
+                except Exception as exc:
+                    logger.warning("Failed to cleanup rejected worktree %s for run %s: %s", run.worktree_name, run_id, exc)
             runs_repo.update_status(db, run_id, RunStatus.ABORTED.value, finished=True)
             return RunReviewResponse(
                 run_id=run_id,
                 status=RunStatus.ABORTED.value,
                 merged=False,
                 pushed=False,
-                message="Run review rejected and marked ABORTED.",
+                message="Run review rejected, worktree cleaned up, and status marked ABORTED.",
             )
 
         merged = False
@@ -515,23 +545,34 @@ def submit_review(db: Session, run_id: str, request: RunReviewRequest) -> RunRev
         )
 
 
-def abort_run(db: Session, run_id: str) -> Run:
-    """Abort an active, queued, or awaiting-review run immediately."""
+def abort_run(
+    db: Session,
+    run_id: str,
+    clean_worktree: bool = True,
+    reason: str = "Aborted by user request.",
+) -> Run:
+    """Abort an active, queued, or awaiting-review run immediately and clean up worktree."""
     run = get_run(db, run_id)
+    project = projects_repo.get_by_id(db, run.project_id)
+    repo_dir = Path(project.path) if project else None
+
     if run.status in (RunStatus.COMPLETED.value, RunStatus.FAILED.value, RunStatus.ABORTED.value):
+        if clean_worktree and run.worktree_name and repo_dir and repo_dir.exists():
+            try:
+                cleanup_worktree(run.worktree_name, run.branch_name or "", force=True, repo_dir=repo_dir)
+            except Exception as exc:
+                logger.warning("Could not clean worktree %s for finished run %s: %s", run.worktree_name, run_id, exc)
         return run
 
     run_manager.request_abort(run_id)
 
     target_container = run.container_name
-    if not target_container:
-        project = projects_repo.get_by_id(db, run.project_id)
-        if project:
-            target_container, _ = derive_container_names(Path(project.path), worktree_name=run.worktree_name or "")
+    if not target_container and repo_dir:
+        target_container, _ = derive_container_names(repo_dir, worktree_name=run.worktree_name or "")
 
     if target_container:
         try:
-            for engine_cmd in ("docker", "podman"):
+            for engine_cmd in ("podman", "docker"):
                 engine_bin = shutil.which(engine_cmd)
                 if engine_bin:
                     subprocess.run(
@@ -543,11 +584,17 @@ def abort_run(db: Session, run_id: str) -> Run:
         except Exception as exc:
             logger.warning("Could not terminate container %s for run %s: %s", target_container, run_id, exc)
 
+    if clean_worktree and run.worktree_name and repo_dir and repo_dir.exists():
+        try:
+            cleanup_worktree(run.worktree_name, run.branch_name or "", force=True, repo_dir=repo_dir)
+        except Exception as exc:
+            logger.warning("Could not clean worktree %s for aborted run %s: %s", run.worktree_name, run_id, exc)
+
     updated = runs_repo.update_status(
         db,
         run_id,
         RunStatus.ABORTED.value,
-        error_message="Aborted by user request.",
+        error_message=reason,
         finished=True,
     )
     return updated or run

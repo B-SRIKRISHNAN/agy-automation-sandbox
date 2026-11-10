@@ -1,6 +1,7 @@
 import { Sparkles } from 'lucide-react';
 import { ProjectSelector } from '../launcher/ProjectSelector';
 import { QuotaPill } from '../quota/QuotaPill';
+import { StoragePill } from '../storage/StoragePill';
 
 export function Header() {
   return (
@@ -20,8 +21,9 @@ export function Header() {
           <ProjectSelector />
         </div>
 
-        {/* Right: Live Quota Pill */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Right: Live Storage & Quota Pills */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <StoragePill />
           <QuotaPill />
         </div>
       </div>

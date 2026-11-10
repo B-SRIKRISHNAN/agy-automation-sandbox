@@ -159,6 +159,11 @@ class ChatSessionManager:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Chat session '{session_id}' not found.")
         return session
 
+    def list_sessions(self) -> List[ChatSessionState]:
+        """Return all tracked chat sessions."""
+        with self._lock:
+            return list(self._sessions.values())
+
     def post_message(self, session_id: str, content: str) -> None:
         """Send a message into the conversation turn and run agy streaming in a background thread."""
         session = self.get_session(session_id)
@@ -337,6 +342,24 @@ class ChatSessionManager:
             run_id=run_record.id,
             message=f"Created Issue #{issue_detail.number} and launched autonomous sandbox runner.",
         )
+
+    def sweep_stale_sessions(self, db: Session, max_age_seconds: float = 7200.0) -> List[str]:
+        """Terminate and clean up worktrees of sessions inactive for more than max_age_seconds."""
+        now = utc_now()
+        with self._lock:
+            stale_ids = [
+                s_id for s_id, s in self._sessions.items()
+                if s.status == "ACTIVE" and (now - s.updated_at).total_seconds() > max_age_seconds
+            ]
+        swept = []
+        for s_id in stale_ids:
+            try:
+                self.terminate_session(db, s_id)
+                swept.append(s_id)
+                logger.info("Automatically swept stale chat session %s", s_id)
+            except Exception as exc:
+                logger.warning("Failed to auto-sweep chat session %s: %s", s_id, exc)
+        return swept
 
     def register_subscriber(self, session_id: str) -> asyncio.Queue:
         session = self.get_session(session_id)
