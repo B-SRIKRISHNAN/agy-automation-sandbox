@@ -11,10 +11,13 @@ import {
   Loader2,
   Maximize2,
   Minimize2,
+  ExternalLink,
 } from 'lucide-react';
 import { useChatSession } from '../../hooks/useChatSession';
 import { Button } from '../common/Button';
 import { createPortal } from 'react-dom';
+import { MarkdownContent } from './MarkdownContent';
+import { MessageReaderModal } from './MessageReaderModal';
 
 interface ChatAssistantDrawerProps {
   isOpen: boolean;
@@ -54,6 +57,7 @@ export function ChatAssistantDrawer({
   const [initialConcept, setInitialConcept] = useState('');
   const [autoApprove, setAutoApprove] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [selectedReaderMessage, setSelectedReaderMessage] = useState<{ role: string; content: string } | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -234,7 +238,7 @@ export function ChatAssistantDrawer({
             )}
 
             {/* Messages Feed */}
-            <div className="space-y-3 pb-2">
+            <div className="space-y-4 pb-2">
               {messages.map((m, idx) => {
                 const isUser = m.role === 'user';
                 return (
@@ -242,18 +246,49 @@ export function ChatAssistantDrawer({
                     key={idx}
                     className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} space-y-1`}
                   >
-                    <div className="text-[10px] text-slate-500 px-1 font-mono">
-                      {isUser ? 'You' : 'Antigravity Analyst'}
-                    </div>
-                    <div
-                      className={`max-w-[88%] sm:max-w-[80%] rounded-2xl px-4 py-3 text-xs sm:text-sm leading-relaxed ${
-                        isUser
-                          ? 'bg-indigo-600 text-white rounded-br-sm'
-                          : 'bg-slate-900 border border-slate-800 text-slate-200 rounded-bl-sm shadow-sm'
-                      }`}
-                    >
-                      <div className="whitespace-pre-wrap break-words">{m.content}</div>
-                    </div>
+                    {isUser ? (
+                      <>
+                        <div className="text-[10px] text-slate-500 px-1 font-mono">You</div>
+                        <div className="max-w-[88%] sm:max-w-[80%] rounded-2xl px-4 py-3 text-xs sm:text-sm leading-relaxed bg-indigo-600 text-white rounded-br-sm shadow-sm">
+                          <div className="whitespace-pre-wrap break-words">{m.content}</div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="w-full sm:max-w-[88%] rounded-2xl p-4 text-xs sm:text-sm leading-relaxed bg-slate-900 border border-slate-800 text-slate-200 rounded-bl-sm shadow-sm relative group">
+                        <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800/80 text-[10px] text-slate-400">
+                          <div className="flex items-center gap-1.5 font-semibold text-indigo-300">
+                            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                            <span>Antigravity Analyst</span>
+                          </div>
+                          <button
+                            onClick={() => setSelectedReaderMessage(m)}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition active:scale-95 shadow-sm"
+                            title="Open in distraction-free Reader View"
+                          >
+                            <Maximize2 className="w-3 h-3 text-indigo-400" />
+                            <span className="text-[11px] font-medium">Reader</span>
+                          </button>
+                        </div>
+
+                        <div
+                          onClick={() => setSelectedReaderMessage(m)}
+                          className="cursor-pointer select-text hover:bg-slate-950/20 rounded-xl transition-colors p-1"
+                          title="Tap message to open in Reader View"
+                        >
+                          <MarkdownContent content={m.content} fontSize="sm" />
+                        </div>
+
+                        <div className="mt-2 pt-1 flex justify-end">
+                          <button
+                            onClick={() => setSelectedReaderMessage(m)}
+                            className="text-[10px] text-indigo-400/80 hover:text-indigo-300 flex items-center gap-1 font-mono transition"
+                          >
+                            <span>Tap to enlarge</span>
+                            <ExternalLink className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -362,6 +397,16 @@ export function ChatAssistantDrawer({
             </button>
           </form>
         </div>
+      )}
+
+      {/* Full-Screen Message Reader Modal */}
+      {selectedReaderMessage && (
+        <MessageReaderModal
+          isOpen={true}
+          onClose={() => setSelectedReaderMessage(null)}
+          role={selectedReaderMessage.role}
+          content={selectedReaderMessage.content}
+        />
       )}
     </div>,
     document.body
