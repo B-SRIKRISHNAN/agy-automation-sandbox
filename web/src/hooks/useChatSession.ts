@@ -12,6 +12,7 @@ export function useChatSession(projectId?: string) {
   const [isCreatingAndRunning, setIsCreatingAndRunning] = useState(false);
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isLoadingActive, setIsLoadingActive] = useState(false);
 
   const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -93,7 +94,8 @@ export function useChatSession(projectId?: string) {
     };
 
     es.onerror = () => {
-      closeStream();
+      // Don't kill streaming immediately; let polling fallback continue to sync
+      console.warn('SSE connection interrupted, relying on polling fallback');
     };
   }, [closeStream]);
 
@@ -103,6 +105,56 @@ export function useChatSession(projectId?: string) {
       closeStream();
     };
   }, [closeStream]);
+
+  // Restore active session for this project if one exists
+  const loadActiveSession = useCallback(async () => {
+    try {
+      setIsLoadingActive(true);
+      const active = await api.getActiveChatSession(projectId);
+      if (active && active.status === 'ACTIVE') {
+        setSession(active);
+        setMessages(active.messages);
+        if (active.draft_issue) {
+          setDraftIssue(active.draft_issue);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to fetch active chat session:', err);
+    } finally {
+      setIsLoadingActive(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    loadActiveSession();
+  }, [loadActiveSession]);
+
+  // Dual-channel polling fallback: while isStreaming is active, poll to keep messages and draft card in sync
+  useEffect(() => {
+    if (!isStreaming || !session || session.status !== 'ACTIVE') return;
+
+    const interval = setInterval(async () => {
+      try {
+        const latest = await api.getChatSession(session.session_id);
+        if (latest) {
+          if (latest.messages.length > messages.length) {
+            setMessages(latest.messages);
+          }
+          if (latest.draft_issue) {
+            setDraftIssue(latest.draft_issue);
+          }
+          if (latest.status !== 'ACTIVE') {
+            setSession(latest);
+            closeStream();
+          }
+        }
+      } catch (err) {
+        console.debug('Polling sync error:', err);
+      }
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [isStreaming, session, messages.length, closeStream]);
 
   // Start new formulation chat session
   const startSession = async (initialPrompt: string = '') => {
@@ -162,8 +214,10 @@ export function useChatSession(projectId?: string) {
     setIsTerminating(true);
     closeStream();
     try {
-      const updated = await api.terminateChatSession(session.session_id);
-      setSession(updated);
+      await api.terminateChatSession(session.session_id);
+      setSession(null);
+      setMessages([]);
+      setDraftIssue(null);
     } catch (err) {
       console.error('Error terminating session:', err);
     } finally {
@@ -206,6 +260,7 @@ export function useChatSession(projectId?: string) {
     setDraftIssue,
     isStreaming,
     isStarting,
+    isLoadingActive,
     isTerminating,
     isCreatingAndRunning,
     activeTool,
@@ -214,6 +269,7 @@ export function useChatSession(projectId?: string) {
     sendMessage,
     terminateSession,
     createAndRun,
+    loadActiveSession,
     resetSession: () => {
       closeStream();
       setSession(null);

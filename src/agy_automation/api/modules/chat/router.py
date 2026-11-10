@@ -2,12 +2,15 @@
 
 import asyncio
 import json
-from fastapi import APIRouter, Depends, status
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from agy_automation.api.common.database import get_db
 from agy_automation.api.modules.chat import service
+from agy_automation.api.modules.projects import repository as projects_repo
 from agy_automation.api.modules.chat.schemas import (
     ChatMessageRequest,
     ChatMessageResponse,
@@ -29,6 +32,23 @@ def create_chat_session(
     """Initiate an interactive AI issue formulation session with scratch worktree isolation."""
     session_state = service.chat_manager.create_session(db, request)
     return session_state.to_response()
+
+
+@router.get("/active", response_model=Optional[ChatSessionResponse])
+def get_active_chat_session(
+    project_id: Optional[str] = Query(None, description="Project ID"),
+    db: Session = Depends(get_db),
+) -> Optional[ChatSessionResponse]:
+    """Retrieve the currently active chat formulation session for project."""
+    target_pid = project_id
+    if not target_pid:
+        active_proj = projects_repo.get_active(db)
+        if active_proj:
+            target_pid = active_proj.id
+    if not target_pid:
+        return None
+    session_state = service.chat_manager.get_active_session_for_project(target_pid)
+    return session_state.to_response() if session_state else None
 
 
 @router.get("/{session_id}", response_model=ChatSessionResponse)

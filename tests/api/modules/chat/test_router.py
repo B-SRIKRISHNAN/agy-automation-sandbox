@@ -57,3 +57,24 @@ class TestChatRouter(InMemoryDatabaseTestCase):
             term_res = self.client.post(f"/api/chat-sessions/{session_id}/terminate")
             self.assertEqual(term_res.status_code, 200)
             self.assertEqual(term_res.json()["status"], "TERMINATED")
+
+    @patch("agy_automation.api.modules.chat.service.create_worktree")
+    @patch("agy_automation.api.modules.chat.service.inject_issue_context")
+    def test_get_active_session_endpoint(self, mock_inject, mock_create_wt):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            mock_create_wt.return_value = Path(tmp_dir)
+
+            # Initially no active session
+            res = self.client.get(f"/api/chat-sessions/active?project_id={self.project.id}")
+            # Could be None / 200 with null
+            self.assertEqual(res.status_code, 200)
+
+            # Create one
+            self.client.post("/api/chat-sessions", json={"project_id": self.project.id, "initial_prompt": "First message"})
+            res_active = self.client.get(f"/api/chat-sessions/active?project_id={self.project.id}")
+            self.assertEqual(res_active.status_code, 200)
+            active_data = res_active.json()
+            self.assertIsNotNone(active_data)
+            self.assertEqual(active_data["status"], "ACTIVE")
+            self.assertEqual(active_data["project_id"], self.project.id)

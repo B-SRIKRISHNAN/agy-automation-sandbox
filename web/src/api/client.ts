@@ -104,6 +104,11 @@ export const api = {
   },
 
   // Interactive AI Formulation Chat
+  getActiveChatSession: (projectId?: string) => {
+    const qs = projectId ? `?project_id=${projectId}` : '';
+    return request<ChatSession | null>(`/api/chat-sessions/active${qs}`);
+  },
+
   createChatSession: (payload: ChatSessionCreateRequest) =>
     request<ChatSession>('/api/chat-sessions', {
       method: 'POST',

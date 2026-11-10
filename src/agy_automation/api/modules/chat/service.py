@@ -43,8 +43,14 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def get_chat_storage_dir() -> Path:
+    d = Path.home() / ".agy-automation" / "chat"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 class ChatSessionState:
-    """In-memory state of an active interactive chat formulation session."""
+    """In-memory and persisted state of an active interactive chat formulation session."""
 
     def __init__(
         self,
@@ -70,7 +76,48 @@ class ChatSessionState:
         self.updated_at = utc_now()
         self.active_proc: Optional[subprocess.Popen] = None
         self.subscribers: List[asyncio.Queue] = []
+        self.recent_events: List[Dict[str, Any]] = []
         self.lock = threading.Lock()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "project_id": self.project_id,
+            "session_slug": self.session_slug,
+            "worktree_name": self.worktree_name,
+            "branch_name": self.branch_name,
+            "worktree_path": str(self.worktree_path),
+            "conversation_id": self.conversation_id,
+            "status": self.status,
+            "messages": [m.model_dump(mode="json") for m in self.messages],
+            "draft_issue": self.draft_issue.model_dump(mode="json") if self.draft_issue else None,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ChatSessionState":
+        inst = cls(
+            session_id=data["session_id"],
+            project_id=data["project_id"],
+            session_slug=data["session_slug"],
+            worktree_name=data["worktree_name"],
+            branch_name=data["branch_name"],
+            worktree_path=Path(data["worktree_path"]),
+            conversation_id=data["conversation_id"],
+        )
+        inst.status = data.get("status", "ACTIVE")
+        inst.messages = [ChatMessageResponse(**m) for m in data.get("messages", [])]
+        draft_raw = data.get("draft_issue")
+        if draft_raw:
+            inst.draft_issue = DraftIssue(**draft_raw)
+        try:
+            inst.created_at = datetime.fromisoformat(data["created_at"])
+            inst.updated_at = datetime.fromisoformat(data["updated_at"])
+        except Exception:
+            inst.created_at = utc_now()
+            inst.updated_at = utc_now()
+        return inst
 
     def to_response(self) -> ChatSessionResponse:
         return ChatSessionResponse(
@@ -92,8 +139,40 @@ class ChatSessionManager:
     """Singleton manager tracking and coordinating interactive formulation sessions."""
 
     def __init__(self) -> None:
-        self._sessions: Dict[str, ChatSessionState] = {}
         self._lock = threading.Lock()
+        self._sessions: Dict[str, ChatSessionState] = self._load_sessions_from_disk()
+
+    def _save_session_to_disk(self, session: ChatSessionState) -> None:
+        try:
+            target_file = get_chat_storage_dir() / f"{session.session_id}.json"
+            target_file.write_text(json.dumps(session.to_dict(), indent=2), encoding="utf-8")
+        except Exception as exc:
+            logger.warning("Could not persist chat session %s to disk: %s", session.session_id, exc)
+
+    def _load_sessions_from_disk(self) -> Dict[str, ChatSessionState]:
+        loaded = {}
+        chat_dir = get_chat_storage_dir()
+        for f in chat_dir.glob("*.json"):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                s = ChatSessionState.from_dict(data)
+                if s.worktree_path.is_dir() and s.status == "ACTIVE":
+                    loaded[s.session_id] = s
+            except Exception as exc:
+                logger.warning("Failed to load chat session from %s: %s", f, exc)
+        return loaded
+
+    def get_active_session_for_project(self, project_id: str) -> Optional[ChatSessionState]:
+        """Find the active chat formulation session for a project."""
+        with self._lock:
+            candidates = [
+                s for s in self._sessions.values()
+                if s.project_id == project_id and s.status == "ACTIVE" and s.worktree_path.is_dir()
+            ]
+        if candidates:
+            candidates.sort(key=lambda s: s.updated_at, reverse=True)
+            return candidates[0]
+        return None
 
     def create_session(self, db: Session, request: ChatSessionCreateRequest) -> ChatSessionState:
         """Create a scratch worktree and interactive session for issue formulation."""
@@ -101,7 +180,7 @@ class ChatSessionManager:
         if request.project_id:
             project = projects_repo.get_by_id(db, request.project_id)
         if not project:
-            project = projects_repo.get_active_project(db)
+            project = projects_repo.get_active(db)
         if not project:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -146,6 +225,7 @@ class ChatSessionManager:
 
         with self._lock:
             self._sessions[session_id] = session_state
+        self._save_session_to_disk(session_state)
 
         if initial_prompt:
             self.post_message(session_id, initial_prompt)
@@ -155,6 +235,16 @@ class ChatSessionManager:
     def get_session(self, session_id: str) -> ChatSessionState:
         with self._lock:
             session = self._sessions.get(session_id)
+        if not session:
+            chat_file = get_chat_storage_dir() / f"{session_id}.json"
+            if chat_file.is_file():
+                try:
+                    data = json.loads(chat_file.read_text(encoding="utf-8"))
+                    session = ChatSessionState.from_dict(data)
+                    with self._lock:
+                        self._sessions[session_id] = session
+                except Exception:
+                    pass
         if not session:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Chat session '{session_id}' not found.")
         return session
@@ -176,6 +266,7 @@ class ChatSessionManager:
         with session.lock:
             session.messages.append(ChatMessageResponse(role="user", content=content, timestamp=utc_now()))
             session.updated_at = utc_now()
+        self._save_session_to_disk(session)
 
         agy_bin = verify_agy_installed()
 
@@ -195,7 +286,7 @@ class ChatSessionManager:
                     cmd,
                     cwd=str(session.worktree_path),
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
                     text=True,
                     bufsize=1,
                 )
@@ -213,7 +304,14 @@ class ChatSessionManager:
                             parsed = json.loads(clean_line)
                             evt_type = parsed.get("event")
 
-                            if evt_type == "step_update":
+                            if evt_type == "init":
+                                real_conv_id = parsed.get("conversation_id")
+                                if real_conv_id and real_conv_id != session.conversation_id:
+                                    logger.info("Synchronized agy conversation_id for session %s: %s", session.session_id, real_conv_id)
+                                    session.conversation_id = real_conv_id
+                                    self._save_session_to_disk(session)
+
+                            elif evt_type == "step_update":
                                 su = parsed.get("step_update", {})
                                 step_type = su.get("step_type")
                                 if step_type == "agent_response":
@@ -243,6 +341,7 @@ class ChatSessionManager:
                     with session.lock:
                         session.messages.append(ChatMessageResponse(role="assistant", content=final_text, timestamp=utc_now()))
                         session.updated_at = utc_now()
+                    self._save_session_to_disk(session)
 
                 # Check if NEW_ISSUE.md was created in the worktree
                 new_issue_file = session.worktree_path / "NEW_ISSUE.md"
@@ -253,7 +352,9 @@ class ChatSessionManager:
                         draft = DraftIssue(title=title, body=body)
                         with session.lock:
                             session.draft_issue = draft
+                            session.updated_at = utc_now()
                         self._broadcast(session, {"type": "draft_issue", "draft": {"title": title, "body": body}})
+                        self._save_session_to_disk(session)
                     except Exception as parse_exc:
                         logger.warning("Could not parse NEW_ISSUE.md: %s", parse_exc)
 
@@ -263,7 +364,9 @@ class ChatSessionManager:
             finally:
                 with session.lock:
                     session.active_proc = None
+                    session.updated_at = utc_now()
                 self._broadcast(session, {"type": "done"})
+                self._save_session_to_disk(session)
 
         thread = threading.Thread(target=_turn_worker, daemon=True, name=f"chat-turn-{session_id}")
         thread.start()
@@ -300,6 +403,7 @@ class ChatSessionManager:
             except Exception as exc:
                 logger.warning("Worktree cleanup failed during termination of %s: %s", session_id, exc)
 
+        self._save_session_to_disk(session)
         self._broadcast(session, {"type": "terminated"})
         return session
 
@@ -321,6 +425,9 @@ class ChatSessionManager:
         self.terminate_session(db, session_id)
         with session.lock:
             session.status = "CONVERTED"
+            session.updated_at = utc_now()
+        self._save_session_to_disk(session)
+        self._broadcast(session, {"type": "converted"})
 
         # 3. Start autonomous run for the created issue
         logger.info("Starting autonomous run for Issue #%s...", issue_detail.number)
@@ -365,6 +472,9 @@ class ChatSessionManager:
         session = self.get_session(session_id)
         queue: asyncio.Queue = asyncio.Queue()
         with session.lock:
+            # Replay buffered recent events so late connecting subscribers don't drop tokens
+            for evt in session.recent_events:
+                queue.put_nowait(evt)
             session.subscribers.append(queue)
         return queue
 
@@ -379,6 +489,9 @@ class ChatSessionManager:
 
     def _broadcast(self, session: ChatSessionState, event: Dict[str, Any]) -> None:
         with session.lock:
+            session.recent_events.append(event)
+            if len(session.recent_events) > 100:
+                session.recent_events.pop(0)
             subs = list(session.subscribers)
         for q in subs:
             try:

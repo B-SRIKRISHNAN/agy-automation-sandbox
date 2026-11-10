@@ -5,6 +5,7 @@ import {
   Sparkles,
   StopCircle,
   Play,
+  Plus,
   CheckCircle2,
   AlertTriangle,
   Loader2,
@@ -46,6 +47,7 @@ export function ChatAssistantDrawer({
     terminateSession,
     createAndRun,
     resetSession,
+    loadActiveSession,
   } = useChatSession(projectId);
 
   const [inputPrompt, setInputPrompt] = useState('');
@@ -59,6 +61,13 @@ export function ChatAssistantDrawer({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, activeTool, isStreaming]);
+
+  // Refresh active session on open
+  useEffect(() => {
+    if (isOpen) {
+      loadActiveSession();
+    }
+  }, [isOpen, loadActiveSession]);
 
   if (!isOpen) return null;
 
@@ -123,15 +132,26 @@ export function ChatAssistantDrawer({
 
         <div className="flex items-center gap-2 shrink-0">
           {session && session.status === 'ACTIVE' && (
-            <button
-              onClick={handleTerminate}
-              disabled={isTerminating}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold shadow-sm transition disabled:opacity-50"
-              title="Terminate session immediately"
-            >
-              <StopCircle className="w-3.5 h-3.5 text-white" />
-              <span className="hidden sm:inline">Terminate</span>
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={resetSession}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-slate-700 transition"
+                title="Start a new formulation topic"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">New Topic</span>
+              </button>
+
+              <button
+                onClick={handleTerminate}
+                disabled={isTerminating}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold shadow-sm transition disabled:opacity-50"
+                title="Terminate session and remove scratch worktree"
+              >
+                <StopCircle className="w-3.5 h-3.5 text-white" />
+                <span className="hidden sm:inline">Terminate</span>
+              </button>
+            </div>
           )}
 
           <button
