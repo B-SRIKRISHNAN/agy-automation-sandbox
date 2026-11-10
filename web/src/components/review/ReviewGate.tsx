@@ -87,13 +87,13 @@ export function ReviewGate({ onApprovedOrRejected }: ReviewGateProps) {
         </div>
 
         {currentRun.status === 'AWAITING_REVIEW' && (
-          <div className="flex items-center gap-3 self-end sm:self-auto">
-            <label className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer">
+          <div className="w-full sm:w-auto flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-3 sm:pt-0 border-t border-slate-800/80 sm:border-0">
+            <label className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer self-start sm:self-auto py-0.5">
               <input
                 type="checkbox"
                 checked={pushToRemote}
                 onChange={(e) => setPushToRemote(e.target.checked)}
-                className="w-4 h-4 rounded text-indigo-600 bg-slate-950 border-slate-700"
+                className="w-4 h-4 rounded text-indigo-600 bg-slate-950 border-slate-700 focus:ring-0"
               />
               <span className="flex items-center gap-1">
                 <UploadCloud className="w-3.5 h-3.5 text-indigo-400" />
@@ -101,25 +101,29 @@ export function ReviewGate({ onApprovedOrRejected }: ReviewGateProps) {
               </span>
             </label>
 
-            <Button
-              size="sm"
-              variant="danger"
-              onClick={() => handleDecision(false)}
-              isLoading={isSubmittingReview}
-              icon={<X className="w-3.5 h-3.5" />}
-            >
-              Reject
-            </Button>
+            <div className="grid grid-cols-2 sm:flex items-center gap-2 w-full sm:w-auto">
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={() => handleDecision(false)}
+                isLoading={isSubmittingReview}
+                icon={<X className="w-3.5 h-3.5" />}
+                className="w-full sm:w-auto justify-center py-2 sm:py-1.5"
+              >
+                Reject
+              </Button>
 
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={() => handleDecision(true)}
-              isLoading={isSubmittingReview}
-              icon={<Check className="w-3.5 h-3.5" />}
-            >
-              Approve & Merge
-            </Button>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => handleDecision(true)}
+                isLoading={isSubmittingReview}
+                icon={<Check className="w-3.5 h-3.5" />}
+                className="w-full sm:w-auto justify-center py-2 sm:py-1.5"
+              >
+                Approve & Merge
+              </Button>
+            </div>
           </div>
         )}
       </div>

@@ -405,9 +405,14 @@ def review_and_merge(
         cleanup_worktree(worktree_name, branch_name, repo_dir=repo_dir)
         return True
     else:
-        print(f"\n{Colors.YELLOW}[INFO] Merge cancelled by user. Worktree preserved at:{Colors.RESET}")
-        print(f"{Colors.GRAY}       {worktree_host_dir}{Colors.RESET}")
-        print(f"{Colors.GRAY}To merge manually: git checkout {base_branch} && git merge {branch_name}{Colors.RESET}")
+        if approval_callback is not None:
+            print(f"\n{Colors.YELLOW}[INFO] Review gate closed or timed out. Worktree preserved at:{Colors.RESET}")
+            print(f"{Colors.GRAY}       {worktree_host_dir}{Colors.RESET}")
+            print(f"{Colors.GRAY}You can approve & merge at any time from the Web UI Review Gate.{Colors.RESET}")
+        else:
+            print(f"\n{Colors.YELLOW}[INFO] Merge cancelled by user. Worktree preserved at:{Colors.RESET}")
+            print(f"{Colors.GRAY}       {worktree_host_dir}{Colors.RESET}")
+            print(f"{Colors.GRAY}To merge manually: git checkout {base_branch} && git merge {branch_name}{Colors.RESET}")
         return False
 
 

@@ -367,6 +367,10 @@ Execute tasks, queries, code modifications, and tests inside this protected cont
         session_logger.finish("FAILED", error=str(exc))
         raise
 
+    if context:
+        context.merged = bool(merged)
+        context.pushed = bool(pushed)
+
     session_logger.finish("COMPLETED", merged=merged, pushed=bool(pushed))
     print(f"\n{Colors.CYAN}=========================================================={Colors.RESET}")
     target_msg = f"Session '{session_slug}'" if is_session else f"Issue #{issue_number}"

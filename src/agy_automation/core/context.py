@@ -45,6 +45,8 @@ class PipelineContext:
     approval_callback: Optional[Callable[[], bool]] = None
     push_callback: Optional[Callable[[], bool]] = None
     stream_callback: Optional[Callable[[str], None]] = None
+    merged: bool = False
+    pushed: bool = False
 
     def __post_init__(self) -> None:
         if isinstance(self.target_repo, str):

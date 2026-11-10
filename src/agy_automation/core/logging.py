@@ -257,6 +257,15 @@ class RunSession:
             if isinstance(turns, int):
                 self.metadata["metrics"]["total_turns"] = turns
 
+            response_text = res.get("response")
+            if response_text and isinstance(response_text, str):
+                self.metadata.setdefault("results", {})["summary"] = response_text
+                try:
+                    summary_file = self.run_dir / "summary.md"
+                    summary_file.write_text(response_text, encoding="utf-8")
+                except Exception as exc:
+                    logger.warning("Failed to persist summary.md for run %s: %s", self.run_id, exc)
+
         self._write_metadata()
         return parsed
 

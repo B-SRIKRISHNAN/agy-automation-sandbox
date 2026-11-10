@@ -81,3 +81,4 @@ class RunDiffResponse(BaseModel):
     diff_stat: str = ""
     diff_snippet: str = ""
     commits: List[str] = Field(default_factory=list)
+    summary: Optional[str] = None

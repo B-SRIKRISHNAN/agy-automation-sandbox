@@ -39,6 +39,8 @@ class RunManager:
         self._events: Dict[str, threading.Event] = {}
         self._decisions: Dict[str, bool] = {}
         self._push_decisions: Dict[str, bool] = {}
+        self._resolved: set = set()
+        self._timed_out: set = set()
         self._aborted: set = set()
         self._lock = threading.Lock()
 
@@ -48,6 +50,8 @@ class RunManager:
             self._events[run_id] = threading.Event()
             self._decisions[run_id] = False
             self._push_decisions[run_id] = False
+            self._resolved.discard(run_id)
+            self._timed_out.discard(run_id)
             self._aborted.discard(run_id)
 
     def is_waiting(self, run_id: str) -> bool:
@@ -60,6 +64,7 @@ class RunManager:
         with self._lock:
             self._aborted.add(run_id)
             self._decisions[run_id] = False
+            self._resolved.add(run_id)
             event = self._events.get(run_id)
             if event:
                 event.set()
@@ -68,6 +73,11 @@ class RunManager:
         """Check if run was requested to abort."""
         with self._lock:
             return run_id in self._aborted
+
+    def is_rejected(self, run_id: str) -> bool:
+        """Check if user explicitly submitted a rejection decision."""
+        with self._lock:
+            return run_id in self._resolved and not self._decisions.get(run_id, False)
 
     def wait_for_decision(self, run_id: str, timeout: float = 1800.0) -> bool:
         """Pause current worker thread until review decision is submitted or timeout expires."""
@@ -83,6 +93,8 @@ class RunManager:
         received = event.wait(timeout=timeout)
         if not received:
             logger.warning("Run %s timed out waiting for review decision.", run_id)
+            with self._lock:
+                self._timed_out.add(run_id)
             return False
 
         with self._lock:
@@ -96,6 +108,7 @@ class RunManager:
                 return False
             self._decisions[run_id] = approved
             self._push_decisions[run_id] = push
+            self._resolved.add(run_id)
             event.set()
             return True
 
@@ -110,6 +123,8 @@ class RunManager:
             self._events.pop(run_id, None)
             self._decisions.pop(run_id, None)
             self._push_decisions.pop(run_id, None)
+            self._resolved.discard(run_id)
+            self._timed_out.discard(run_id)
             self._aborted.discard(run_id)
 
 
@@ -211,7 +226,17 @@ def start_run(db: Session, request: RunCreateRequest) -> Run:
                 return
 
             if exit_code == 0:
-                runs_repo.update_status(worker_db, run_id, RunStatus.COMPLETED.value, finished=True)
+                is_merged = getattr(context, "merged", False)
+                if is_merged:
+                    runs_repo.update_status(worker_db, run_id, RunStatus.COMPLETED.value, finished=True)
+                elif run_manager.is_rejected(run_id):
+                    runs_repo.update_status(worker_db, run_id, RunStatus.ABORTED.value, error_message="Review rejected by user.", finished=True)
+                else:
+                    logger.info(
+                        "Worker thread finished for run %s. Worktree is preserved; keeping status AWAITING_REVIEW for offline resumption.",
+                        run_id,
+                    )
+                    runs_repo.update_status(worker_db, run_id, RunStatus.AWAITING_REVIEW.value, finished=False)
             else:
                 err_msg = f"Pipeline execution failed with exit code {exit_code}"
                 runs_repo.update_status(worker_db, run_id, RunStatus.FAILED.value, error_message=err_msg, finished=True)
@@ -264,12 +289,58 @@ def list_runs(
     return runs_repo.list_by_project(db, project_id=project_id, status=status_filter, limit=limit)
 
 
+def _extract_summary(run: Run) -> Optional[str]:
+    """Extract AI resolution summary from summary.md, metadata.json, or events.jsonl."""
+    if not run.log_dir:
+        return None
+    log_dir_path = Path(run.log_dir)
+    if not log_dir_path.exists():
+        return None
+
+    summary_file = log_dir_path / "summary.md"
+    if summary_file.is_file():
+        try:
+            content = summary_file.read_text(encoding="utf-8").strip()
+            if content:
+                return content
+        except Exception:
+            pass
+
+    meta_file = log_dir_path / "metadata.json"
+    if meta_file.is_file():
+        try:
+            meta_data = json.loads(meta_file.read_text(encoding="utf-8"))
+            summary_content = meta_data.get("results", {}).get("summary")
+            if summary_content:
+                return str(summary_content).strip()
+        except Exception:
+            pass
+
+    events_file = log_dir_path / "events.jsonl"
+    if events_file.is_file():
+        try:
+            with open(events_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    if '"event": "result"' in line:
+                        parsed = json.loads(line)
+                        res = parsed.get("data", {}).get("result", {})
+                        summary_content = res.get("response")
+                        if summary_content:
+                            return str(summary_content).strip()
+        except Exception:
+            pass
+
+    return None
+
+
 def get_run_diff(db: Session, run_id: str) -> RunDiffResponse:
-    """Inspect git diff for a run worktree."""
+    """Inspect git diff and AI summary for a run worktree."""
     run = get_run(db, run_id)
     project = projects_repo.get_by_id(db, run.project_id)
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Associated project not found.")
+
+    summary = _extract_summary(run)
 
     if not run.worktree_name or not run.branch_name:
         return RunDiffResponse(
@@ -280,6 +351,7 @@ def get_run_diff(db: Session, run_id: str) -> RunDiffResponse:
             diff_stat="",
             diff_snippet="",
             commits=[],
+            summary=summary,
         )
 
     try:
@@ -297,6 +369,7 @@ def get_run_diff(db: Session, run_id: str) -> RunDiffResponse:
             diff_stat=review_data.get("diff_stat", ""),
             diff_snippet=review_data.get("diff_snippet", ""),
             commits=review_data.get("commits", []),
+            summary=summary,
         )
     except Exception as exc:
         logger.error("Failed to prepare diff for run %s: %s", run_id, exc)
@@ -308,6 +381,7 @@ def get_run_diff(db: Session, run_id: str) -> RunDiffResponse:
             diff_stat="",
             diff_snippet=f"Diff generation failed: {exc}",
             commits=[],
+            summary=summary,
         )
 
 
@@ -357,7 +431,16 @@ def submit_review(db: Session, run_id: str, request: RunReviewRequest) -> RunRev
             interactive=False,
             repo_dir=Path(project.path),
         )
-        if merged and request.push:
+        if not merged:
+            runs_repo.update_status(db, run_id, RunStatus.FAILED.value, error_message="Merge failed.", finished=True)
+            return RunReviewResponse(
+                run_id=run_id,
+                status=RunStatus.FAILED.value,
+                merged=False,
+                pushed=False,
+                message="Failed to merge run branch into base branch.",
+            )
+        if request.push:
             pushed = bool(
                 push_changes(
                     branch_name=run.base_branch,

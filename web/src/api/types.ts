@@ -91,6 +91,7 @@ export interface RunDiffResponse {
   diff_stat: string;
   diff_snippet: string;
   commits: string[];
+  summary?: string | null;
 }
 
 export interface RunReviewRequest {

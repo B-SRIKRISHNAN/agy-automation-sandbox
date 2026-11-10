@@ -336,3 +336,69 @@ class TestRunService(InMemoryDatabaseTestCase):
             interactive=False,
             repo_dir=Path("/tmp/service-repo"),
         )
+
+    @patch("agy_automation.api.modules.runs.service.review_and_merge")
+    @patch("agy_automation.api.modules.runs.service.push_changes")
+    def test_resumption_path_merges_when_worker_already_exited(self, mock_push, mock_merge):
+        mock_merge.return_value = True
+        mock_push.return_value = True
+
+        run = Run(
+            id="run-resume-test",
+            project_id=self.project.id,
+            target_type="issue",
+            target_id="51",
+            worktree_name="worktree-issue-51",
+            branch_name="issue-51",
+            base_branch="main",
+            status=RunStatus.AWAITING_REVIEW.value,
+        )
+        runs_repo.create(self.db, run)
+
+        # Worker is already terminated (not in run_manager._events)
+        self.assertFalse(service.run_manager.is_waiting("run-resume-test"))
+
+        res = service.submit_review(self.db, "run-resume-test", RunReviewRequest(approved=True, push=True))
+        self.assertEqual(res.status, RunStatus.COMPLETED.value)
+        self.assertTrue(res.merged)
+        self.assertTrue(res.pushed)
+
+        # Check DB status
+        refreshed = runs_repo.get_by_id(self.db, "run-resume-test")
+        self.assertEqual(refreshed.status, RunStatus.COMPLETED.value)
+        self.assertIsNotNone(refreshed.finished_at)
+
+    def test_get_run_diff_includes_ai_summary(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            run_dir = Path(tmp_dir) / "run-summary-test"
+            run_dir.mkdir()
+            summary_file = run_dir / "summary.md"
+            summary_file.write_text("### AI Resolution Summary: Fixed Issue #51\n- Tested 10 suites\n- Passed", encoding="utf-8")
+
+            run = Run(
+                id="run-summary-test",
+                project_id=self.project.id,
+                target_type="issue",
+                target_id="51",
+                worktree_name="worktree-issue-51",
+                branch_name="issue-51",
+                base_branch="main",
+                status=RunStatus.AWAITING_REVIEW.value,
+                log_dir=str(run_dir),
+            )
+            runs_repo.create(self.db, run)
+
+            with patch("agy_automation.api.modules.runs.service.prepare_review_data") as mock_prep:
+                mock_prep.return_value = {
+                    "diff_stat": "1 file changed",
+                    "diff_snippet": "+ hello",
+                    "commits": ["fix: test"],
+                }
+                diff = service.get_run_diff(self.db, "run-summary-test")
+
+                self.assertIsNotNone(diff.summary)
+                self.assertIn("### AI Resolution Summary", diff.summary)
+                self.assertIn("Fixed Issue #51", diff.summary)
