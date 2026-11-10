@@ -402,3 +402,58 @@ class TestRunService(InMemoryDatabaseTestCase):
                 self.assertIsNotNone(diff.summary)
                 self.assertIn("### AI Resolution Summary", diff.summary)
                 self.assertIn("Fixed Issue #51", diff.summary)
+
+    def test_submit_review_already_completed_is_idempotent(self):
+        run = Run(
+            id="run-already-completed",
+            project_id=self.project.id,
+            target_type="issue",
+            target_id="51",
+            status=RunStatus.COMPLETED.value,
+        )
+        runs_repo.create(self.db, run)
+
+        res = service.submit_review(self.db, "run-already-completed", RunReviewRequest(approved=True))
+        self.assertEqual(res.status, RunStatus.COMPLETED.value)
+        self.assertTrue(res.merged)
+        self.assertIn("already merged", res.message.lower())
+
+    @patch("agy_automation.api.modules.runs.service.is_branch_existing")
+    def test_submit_review_already_merged_branch_cleaned_up(self, mock_branch_exists):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repo_path = Path(tmp_dir) / "real-repo"
+            repo_path.mkdir()
+
+            project = Project(
+                id="proj-real",
+                name="real-repo",
+                path=str(repo_path),
+                git_branch="main",
+                is_active=True,
+            )
+            self.db.add(project)
+            self.db.commit()
+
+            mock_branch_exists.return_value = False
+
+            run = Run(
+                id="run-merged-cleaned",
+                project_id=project.id,
+                target_type="issue",
+                target_id="51",
+                worktree_name="worktree-nonexistent-cleanup",
+                branch_name="issue-51-cleaned",
+                base_branch="main",
+                status=RunStatus.AWAITING_REVIEW.value,
+            )
+            runs_repo.create(self.db, run)
+
+            res = service.submit_review(self.db, "run-merged-cleaned", RunReviewRequest(approved=True))
+            self.assertEqual(res.status, RunStatus.COMPLETED.value)
+            self.assertTrue(res.merged)
+
+            refreshed = runs_repo.get_by_id(self.db, "run-merged-cleaned")
+            self.assertEqual(refreshed.status, RunStatus.COMPLETED.value)

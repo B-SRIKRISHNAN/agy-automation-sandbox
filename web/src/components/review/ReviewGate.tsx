@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { GitPullRequest, Check, X, UploadCloud } from 'lucide-react';
+import { GitPullRequest, Check, X, UploadCloud, AlertTriangle } from 'lucide-react';
 import { useRuns, useRunDiff } from '../../hooks/useRuns';
 import { DiffViewer } from './DiffViewer';
 import { Button } from '../common/Button';
@@ -13,7 +13,8 @@ export function ReviewGate({ onApprovedOrRejected }: ReviewGateProps) {
   const { runs, submitReview, isSubmittingReview } = useRuns();
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [pushToRemote, setPushToRemote] = useState(false);
-  const [resultMessage, setResultMessage] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [resultFeedback, setResultFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Runs in AWAITING_REVIEW state
   const awaitingRuns = runs.filter((r) => r.status === 'AWAITING_REVIEW');
@@ -23,16 +24,26 @@ export function ReviewGate({ onApprovedOrRejected }: ReviewGateProps) {
   const { data: diff, isLoading: isDiffLoading } = useRunDiff(activeRunId);
 
   const handleDecision = async (approved: boolean) => {
-    if (!activeRunId) return;
+    if (!activeRunId || isSubmitting || isSubmittingReview) return;
+    setIsSubmitting(true);
+    setResultFeedback(null);
     try {
       const res = await submitReview({
         runId: activeRunId,
         payload: { approved, push: pushToRemote },
       });
-      setResultMessage(res.message);
+      setResultFeedback({
+        type: res.status === 'FAILED' ? 'error' : 'success',
+        message: res.message,
+      });
       onApprovedOrRejected();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Decision submission failed');
+      setResultFeedback({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Decision submission failed',
+      });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -106,7 +117,8 @@ export function ReviewGate({ onApprovedOrRejected }: ReviewGateProps) {
                 size="sm"
                 variant="danger"
                 onClick={() => handleDecision(false)}
-                isLoading={isSubmittingReview}
+                disabled={isSubmitting || isSubmittingReview}
+                isLoading={isSubmitting || isSubmittingReview}
                 icon={<X className="w-3.5 h-3.5" />}
                 className="w-full sm:w-auto justify-center py-2 sm:py-1.5"
               >
@@ -117,7 +129,8 @@ export function ReviewGate({ onApprovedOrRejected }: ReviewGateProps) {
                 size="sm"
                 variant="primary"
                 onClick={() => handleDecision(true)}
-                isLoading={isSubmittingReview}
+                disabled={isSubmitting || isSubmittingReview}
+                isLoading={isSubmitting || isSubmittingReview}
                 icon={<Check className="w-3.5 h-3.5" />}
                 className="w-full sm:w-auto justify-center py-2 sm:py-1.5"
               >
@@ -128,10 +141,20 @@ export function ReviewGate({ onApprovedOrRejected }: ReviewGateProps) {
         )}
       </div>
 
-      {resultMessage && (
-        <div className="rounded-xl bg-emerald-950/40 border border-emerald-800/60 p-3 text-xs text-emerald-300 flex items-center gap-2">
-          <Check className="w-4 h-4 shrink-0 text-emerald-400" />
-          <span>{resultMessage}</span>
+      {resultFeedback && (
+        <div
+          className={`rounded-xl border p-3 text-xs flex items-center gap-2 ${
+            resultFeedback.type === 'success'
+              ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300'
+              : 'bg-rose-950/40 border-rose-800/60 text-rose-300'
+          }`}
+        >
+          {resultFeedback.type === 'success' ? (
+            <Check className="w-4 h-4 shrink-0 text-emerald-400" />
+          ) : (
+            <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+          )}
+          <span>{resultFeedback.message}</span>
         </div>
       )}
 

@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -24,6 +25,7 @@ from agy_automation.api.modules.runs.schemas import (
 )
 from agy_automation.core.context import CallerMode, PipelineContext
 from agy_automation.core.engine import derive_container_names
+from agy_automation.core.git import is_branch_existing
 from agy_automation.core.logging import get_logger
 from agy_automation.core.orchestrator import run_pipeline
 from agy_automation.core.push import push_changes
@@ -42,7 +44,19 @@ class RunManager:
         self._resolved: set = set()
         self._timed_out: set = set()
         self._aborted: set = set()
+        self._run_locks: Dict[str, threading.Lock] = {}
         self._lock = threading.Lock()
+
+    @contextmanager
+    def run_lock(self, run_id: str):
+        """Acquire a per-run execution lock to serialize concurrent reviews or state mutations."""
+        with self._lock:
+            if run_id not in self._run_locks:
+                self._run_locks[run_id] = threading.Lock()
+            lock = self._run_locks[run_id]
+
+        with lock:
+            yield
 
     def register_run(self, run_id: str) -> None:
         """Register a new run with an unresolved decision event."""
@@ -386,85 +400,119 @@ def get_run_diff(db: Session, run_id: str) -> RunDiffResponse:
 
 
 def submit_review(db: Session, run_id: str, request: RunReviewRequest) -> RunReviewResponse:
-    """Submit approval or rejection for a run awaiting review."""
-    run = get_run(db, run_id)
-    if run.status != RunStatus.AWAITING_REVIEW.value:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Run '{run_id}' is not awaiting review (current status: {run.status}).",
-        )
+    """Submit approval or rejection for a run awaiting review with concurrency locking and idempotency."""
+    with run_manager.run_lock(run_id):
+        # Refresh run state within the lock
+        run = get_run(db, run_id)
 
-    project = projects_repo.get_by_id(db, run.project_id)
-    if not project:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Associated project not found.")
-
-    # 1. Active Worker Path: unblock the waiting thread
-    if run_manager.is_waiting(run_id):
-        run_manager.resolve_decision(run_id, approved=request.approved, push=request.push)
-        return RunReviewResponse(
-            run_id=run_id,
-            status="PROCESSING",
-            merged=request.approved,
-            pushed=request.push,
-            message="Decision submitted to active background worker.",
-        )
-
-    # 2. Resumption Path: worker exited or server rebooted
-    if not request.approved:
-        runs_repo.update_status(db, run_id, RunStatus.ABORTED.value, finished=True)
-        return RunReviewResponse(
-            run_id=run_id,
-            status=RunStatus.ABORTED.value,
-            merged=False,
-            pushed=False,
-            message="Run review rejected and marked ABORTED.",
-        )
-
-    merged = False
-    pushed = False
-    try:
-        merged = review_and_merge(
-            worktree_name=run.worktree_name or "",
-            branch_name=run.branch_name or "",
-            base_branch=run.base_branch,
-            auto_approve=True,
-            interactive=False,
-            repo_dir=Path(project.path),
-        )
-        if not merged:
-            runs_repo.update_status(db, run_id, RunStatus.FAILED.value, error_message="Merge failed.", finished=True)
+        # Idempotency: If already completed by a concurrent request, return success immediately
+        if run.status == RunStatus.COMPLETED.value:
             return RunReviewResponse(
                 run_id=run_id,
-                status=RunStatus.FAILED.value,
+                status=RunStatus.COMPLETED.value,
+                merged=True,
+                pushed=bool(request.push),
+                message="Run changes are already merged and finalized.",
+            )
+
+        if run.status != RunStatus.AWAITING_REVIEW.value:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Run '{run_id}' is not awaiting review (current status: {run.status}).",
+            )
+
+        project = projects_repo.get_by_id(db, run.project_id)
+        if not project:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Associated project not found.")
+
+        # 1. Active Worker Path: unblock the waiting thread
+        if run_manager.is_waiting(run_id):
+            run_manager.resolve_decision(run_id, approved=request.approved, push=request.push)
+            return RunReviewResponse(
+                run_id=run_id,
+                status="PROCESSING",
+                merged=request.approved,
+                pushed=request.push,
+                message="Decision submitted to active background worker.",
+            )
+
+        # 2. Resumption Path: worker exited or server rebooted
+        if not request.approved:
+            runs_repo.update_status(db, run_id, RunStatus.ABORTED.value, finished=True)
+            return RunReviewResponse(
+                run_id=run_id,
+                status=RunStatus.ABORTED.value,
                 merged=False,
                 pushed=False,
-                message="Failed to merge run branch into base branch.",
+                message="Run review rejected and marked ABORTED.",
             )
-        if request.push:
-            pushed = bool(
-                push_changes(
-                    branch_name=run.base_branch,
-                    auto_approve=True,
-                    interactive=False,
-                    repo_dir=Path(project.path),
-                )
-            )
-        runs_repo.update_status(db, run_id, RunStatus.COMPLETED.value, finished=True)
-    except Exception as exc:
-        logger.exception("Resumed merge failed for run %s: %s", run_id, exc)
-        runs_repo.update_status(db, run_id, RunStatus.FAILED.value, error_message=str(exc), finished=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to merge and finalize run: {exc}",
-        )
 
-    return RunReviewResponse(
-        run_id=run_id,
-        status=RunStatus.COMPLETED.value,
-        merged=merged,
-        pushed=pushed,
-        message="Run merged and finalized successfully from persisted state.",
-    )
+        merged = False
+        pushed = False
+        repo_dir = Path(project.path)
+
+        # Pre-check idempotency: if branch and worktree directory are already cleaned up, changes were already merged
+        if repo_dir.exists() and run.branch_name and not is_branch_existing(run.branch_name, repo_dir):
+            worktree_dir = repo_dir / ".worktrees" / (run.worktree_name or "")
+            if not worktree_dir.exists():
+                logger.info("Run %s branch %s is already merged into %s. Finalizing as COMPLETED.", run_id, run.branch_name, run.base_branch)
+                runs_repo.update_status(db, run_id, RunStatus.COMPLETED.value, finished=True)
+                return RunReviewResponse(
+                    run_id=run_id,
+                    status=RunStatus.COMPLETED.value,
+                    merged=True,
+                    pushed=bool(request.push),
+                    message="Run changes are already merged and finalized.",
+                )
+
+        try:
+            merged = review_and_merge(
+                worktree_name=run.worktree_name or "",
+                branch_name=run.branch_name or "",
+                base_branch=run.base_branch,
+                auto_approve=True,
+                interactive=False,
+                repo_dir=repo_dir,
+            )
+
+            # Post-check: If review_and_merge finished and the branch was deleted during cleanup, merge succeeded
+            if not merged and repo_dir.exists() and run.branch_name and not is_branch_existing(run.branch_name, repo_dir):
+                merged = True
+
+            if not merged:
+                runs_repo.update_status(db, run_id, RunStatus.FAILED.value, error_message="Merge failed.", finished=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to merge run branch into base branch.",
+                )
+
+            if request.push:
+                pushed = bool(
+                    push_changes(
+                        branch_name=run.base_branch,
+                        auto_approve=True,
+                        interactive=False,
+                        repo_dir=repo_dir,
+                    )
+                )
+            runs_repo.update_status(db, run_id, RunStatus.COMPLETED.value, finished=True)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("Resumed merge failed for run %s: %s", run_id, exc)
+            runs_repo.update_status(db, run_id, RunStatus.FAILED.value, error_message=str(exc), finished=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to merge and finalize run: {exc}",
+            )
+
+        return RunReviewResponse(
+            run_id=run_id,
+            status=RunStatus.COMPLETED.value,
+            merged=merged,
+            pushed=pushed,
+            message="Run merged and finalized successfully from persisted state.",
+        )
 
 
 def abort_run(db: Session, run_id: str) -> Run:
